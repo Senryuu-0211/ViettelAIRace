@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Medical Concept Labeling Tool</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="topbar">
+  <span class="file-select">
+    File:
+    <select id="fileSelect"></select>
+  </span>
+  <span class="file-nav">
+    <button id="btnPrev" title="Previous">&#9664;</button>
+    <span id="fileIndex">1 / 100</span>
+    <button id="btnNext" title="Next">&#9654;</button>
+  </span>
+  <span class="actions">
+    <button id="btnSave">Save</button>
+    <button id="btnExport">Export All</button>
+  </span>
+  <span id="status"></span>
+</div>
+
+<div id="notePanel">
+  <pre id="noteContent">Loading...</pre>
+</div>
+
+<div id="bottomRow">
+  <div id="editorPanel">
+    <h3>Entity Editor</h3>
+    <div class="field">
+      <label>Text:</label>
+      <input type="text" id="editText" readonly>
+    </div>
+    <div class="field">
+      <label>Type:</label>
+      <select id="editType">
+        <option value="">-- Select --</option>
+        <option value="THUỐC">THUỐC</option>
+        <option value="CHẨN_ĐOÁN">CHẨN_ĐOÁN</option>
+        <option value="TRIỆU_CHỨNG">TRIỆU_CHỨNG</option>
+        <option value="TÊN_XÉT_NGHIỆM">TÊN_XÉT_NGHIỆM</option>
+        <option value="KẾT_QUẢ_XÉT_NGHIỆM">KẾT_QUẢ_XÉT_NGHIỆM</option>
+      </select>
+    </div>
+    <div class="field posfield">
+      <label>Pos:</label>
+      <span id="editPos">-</span>
+    </div>
+    <div class="field checkboxes">
+      <label>Assertions:</label>
+      <label class="cb"><input type="checkbox" id="cbNegated"> isNegated</label>
+      <label class="cb"><input type="checkbox" id="cbHistorical"> isHistorical</label>
+      <label class="cb"><input type="checkbox" id="cbFamily"> isFamily</label>
+    </div>
+    <div class="field">
+      <label>Candidates:</label>
+      <input type="text" id="editCandidates" placeholder="comma separated">
+    </div>
+    <div class="field buttons">
+      <button id="btnAdd">Add</button>
+      <button id="btnUpdate">Update</button>
+      <button id="btnDelete">Delete</button>
+      <button id="btnClear">Clear</button>
+    </div>
+  </div>
+
+  <div id="listPanel">
+    <h3>Entity List (<span id="listCount">0</span>)</h3>
+    <div id="entityList"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

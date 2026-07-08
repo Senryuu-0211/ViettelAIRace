@@ -8,16 +8,18 @@ env/
 
 # Environment
 .env
-.env.example
+
+# Claude config (không commit)
+.claude/
+
+# Input data (test set, không commit)
+input/
 
 # UI labels
 ui/gold/
 
 # Pipeline output
 pipeline/output/
-
-# Data (large files, not tracked)
-Project 1/VAI_NVS_DATA/
 
 # OS junk
 Thumbs.db
