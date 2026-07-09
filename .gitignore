@@ -6,6 +6,9 @@ venv/
 env/
 .ipynb_checkpoints/
 
+# Claude config (không commit)
+.claude/
+
 # Environment
 .env
 .env.example

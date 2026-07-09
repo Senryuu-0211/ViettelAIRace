@@ -1,91 +1,157 @@
 """
-ICD-10 local lookup — minimal KB từ anchor set + BYT VN.
-Khi có file KB đầy đủ thì thay thế module này.
+ICD-10 linker — hybrid retrieval trên KB TT06 local (data/icd10_tt06.json).
+
+Index 2 tầng:
+  - category  (vd K21 "Bệnh trào ngược dạ dày- thực quản")  -> trả CẢ cụm mã {K21.0, K21.9}
+  - leaf      (vd K21.0 "...kèm viêm thực quản")            -> trả 1 mã [K21.0]
+
+Query chung khớp category -> SET; query cụ thể khớp leaf -> mã đơn.
+Điểm = fuse(lexical rapidfuzz, cosine embedding). USE_EMBEDDING=0 -> lexical thuần.
 """
-
 import json
-import os
-from typing import Optional
+import re
+import unicodedata
 
-ICD10_KB: dict[str, list[str]] = {}
+import numpy as np
 
-ANCHOR_ICD10 = {
-    "bệnh trào ngược dạ dày-thực quản": ["K21.0", "K21.9"],
-    "bệnh trào ngược dạ dày - thực quản": ["K21.0", "K21.9"],
-    "trào ngược dạ dày thực quản": ["K21.0", "K21.9"],
-    "tăng huyết áp": ["I10"],
-    "tăng huyết áp vô căn": ["I10"],
-    "đái tháo đường": ["E11.9"],
-    "đái tháo đường type 2": ["E11.9"],
-    "đái tháo đường type ii": ["E11.9"],
-    "hen suyễn": ["J45.9"],
-    "hen phế quản": ["J45.9"],
-    "bệnh phổi tắc nghẽn mạn tính": ["J44.9"],
-    "copd": ["J44.9"],
-    "suy tim": ["I50.9"],
-    "suy tim sung huyết": ["I50.0"],
-    "nhồi máu cơ tim": ["I21.9"],
-    "thiếu máu cơ tim": ["I25.9"],
-    "đột quỵ": ["I64"],
-    "tai biến mạch máu não": ["I64"],
-    "xơ gan": ["K74.6"],
-    "viêm gan": ["K75.9"],
-    "suy thận": ["N19"],
-    "suy thận mạn": ["N18.9"],
-    "ung thư": ["C80.9"],
-    "bệnh động mạch vành": ["I25.1"],
-    "xơ vữa động mạch": ["I70.9"],
-    "bệnh tim mạch do xơ vữa động mạch": ["I25.1"],
-    "rối loạn lo âu": ["F41.9"],
-    "trầm cảm": ["F32.9"],
-    "loét dạ dày": ["K25.9"],
-    "viêm phổi": ["J18.9"],
-    "tăng lipid máu": ["E78.5"],
-    "tăng lipid máu không đặc hiệu": ["E78.5"],
-    "tăng lipid máu, không đặc hiệu": ["E78.5"],
-    "béo phì": ["E66.9"],
-    "thiếu máu": ["D64.9"],
-    "hạ huyết áp": ["I95.9"],
-    "hạ huyết áp không đặc hiệu": ["I95.9"],
-    "hạ huyết áp, không đặc hiệu": ["I95.9"],
-    "viêm phế quản": ["J40"],
-    "viêm dạ dày": ["K29.7"],
-    "tắc nghẽn đường mật": ["K83.1"],
-    "giãn đường mật": ["K83.8"],
-    "hội chứng não gan": ["K72.9"],
-    "xơ gan do rượu": ["K70.3"],
-    "khối u trực tràng": ["C20"],
-    "u trực tràng": ["C20"],
-    "u ác trực tràng": ["C20"],
-    "u tuyến": ["D12.8"],
-    "đau bụng": ["R10.9"],
+from pipeline.config import (
+    ICD_KB_PATH, ICD_MIN_SCORE, ICD_LEXICAL_WEIGHT, ICD_TOP_K,
+    USE_EMBEDDING, EMBED_LEAVES,
+)
+
+try:
+    from rapidfuzz import fuzz, process
+    _HAS_RF = True
+except ImportError:
+    _HAS_RF = False
+
+# viết tắt/đồng nghĩa lâm sàng hay gặp -> dạng chuẩn để lexical bắt tốt hơn
+ABBREV = {
+    "tha": "tăng huyết áp",
+    "đtđ": "đái tháo đường",
+    "copd": "bệnh phổi tắc nghẽn mạn tính",
+    "gerd": "trào ngược dạ dày thực quản",
+    "nmct": "nhồi máu cơ tim",
+    "tbmmn": "tai biến mạch máu não",
+    "suy tim ứ huyết": "suy tim sung huyết",
 }
 
+_INDEX = None  # dict: names, norms, code_lists, emb
 
-def _init_kb():
-    global ICD10_KB
-    ICD10_KB.update(ANCHOR_ICD10)
-    kb_path = os.getenv("ICD10_KB_PATH", "")
-    if kb_path and os.path.exists(kb_path):
-        with open(kb_path, "r", encoding="utf-8") as f:
-            external = json.load(f)
-            if isinstance(external, dict):
-                ICD10_KB.update(external)
+
+def _strip_dagger(code: str) -> str:
+    return code.replace("†", "").replace("*", "").strip()
+
+
+def _normalize(s: str) -> str:
+    s = unicodedata.normalize("NFC", s or "").lower().strip()
+    s = s.replace("†", "").replace("*", "")
+    s = re.sub(r"[\-–—/]", " ", s)          # gộp gạch nối/gạch chéo
+    s = re.sub(r"[^\w\sàáảãạ]", " ", s, flags=re.UNICODE)
+    s = re.sub(r"\s+", " ", s).strip()
+    for k, v in ABBREV.items():
+        s = re.sub(rf"\b{re.escape(k)}\b", v, s)
+    return s
+
+
+def _build_index():
+    global _INDEX
+    with open(ICD_KB_PATH, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    names, code_lists = [], []
+    # tầng category: tên nhóm -> cả cụm mã (đã strip dagger, dedupe, giữ thứ tự)
+    for cat_code, obj in data["categories"].items():
+        name = (obj.get("name") or "").strip() or cat_code
+        codes = list(dict.fromkeys(_strip_dagger(c) for c in obj.get("codes", []) if _strip_dagger(c)))
+        if not codes:
+            continue
+        names.append(name)
+        code_lists.append(codes)
+    # tầng leaf: tên mã lá -> chính mã đó
+    if EMBED_LEAVES:
+        for lf in data["codes"]:
+            code = _strip_dagger(lf.get("code", ""))
+            name = (lf.get("name") or "").strip()
+            if not code or not name:
+                continue
+            names.append(name)
+            code_lists.append([code])
+
+    _INDEX = {
+        "names": names,
+        "norms": [_normalize(n) for n in names],
+        "code_lists": code_lists,
+        "emb": None,
+    }
+    return _INDEX
+
+
+def _ensure_emb():
+    if _INDEX["emb"] is None and USE_EMBEDDING:
+        from pipeline.linker.embedder import embed_corpus
+        key = "icd_cat_leaf" if EMBED_LEAVES else "icd_cat"
+        _INDEX["emb"] = embed_corpus(_INDEX["names"], key)
+
+
+def _lexical_topk(qnorm: str, k: int):
+    norms = _INDEX["norms"]
+    if _HAS_RF:
+        hits = process.extract(qnorm, norms, scorer=fuzz.token_set_ratio,
+                               limit=k, processor=None)
+        return [(idx, score / 100.0) for (_, score, idx) in hits]
+    # fallback: token-coverage của query
+    qs = set(qnorm.split())
+    scored = []
+    for i, n in enumerate(norms):
+        ns = set(n.split())
+        scored.append((i, (len(qs & ns) / len(qs)) if qs else 0.0))
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return scored[:k]
+
+
+def _lexical_one(qnorm: str, idx: int) -> float:
+    if _HAS_RF:
+        return fuzz.token_set_ratio(qnorm, _INDEX["norms"][idx]) / 100.0
+    qs, ns = set(qnorm.split()), set(_INDEX["norms"][idx].split())
+    return (len(qs & ns) / len(qs)) if qs else 0.0
 
 
 def lookup_diagnosis(diagnosis_text: str) -> list[str]:
-    if not ICD10_KB:
-        _init_kb()
+    if _INDEX is None:
+        _build_index()
 
-    text = diagnosis_text.lower().strip()
-    if text in ICD10_KB:
-        return ICD10_KB[text]
+    qnorm = _normalize(diagnosis_text)
+    if not qnorm:
+        return []
 
-    for key, codes in ICD10_KB.items():
-        if key in text or text in key:
-            return codes
+    lex_top = _lexical_topk(qnorm, ICD_TOP_K)          # [(idx, lex_score)]
+    candidates = {idx: lex for idx, lex in lex_top}
 
-    return []
+    emb_scores = None
+    if USE_EMBEDDING:
+        try:
+            _ensure_emb()
+            from pipeline.linker.embedder import embed_query
+            qv = embed_query(qnorm)
+            emb_scores = _INDEX["emb"] @ qv               # cosine (đã L2-norm)
+            for idx in np.argsort(-emb_scores)[:ICD_TOP_K]:
+                candidates.setdefault(int(idx), _lexical_one(qnorm, int(idx)))
+        except Exception:
+            emb_scores = None
+
+    # fuse
+    w = ICD_LEXICAL_WEIGHT if emb_scores is not None else 1.0
+    best_idx, best_score = None, -1.0
+    for idx, lex in candidates.items():
+        emb = float(emb_scores[idx]) if emb_scores is not None else 0.0
+        fused = w * lex + (1.0 - w) * emb
+        if fused > best_score:
+            best_score, best_idx = fused, idx
+
+    if best_idx is None or best_score < ICD_MIN_SCORE:
+        return []
+    return list(_INDEX["code_lists"][best_idx])
 
 
 def lookup_batch(diagnosis_texts: list[str]) -> dict[str, list[str]]:

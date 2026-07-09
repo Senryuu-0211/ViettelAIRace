@@ -12,9 +12,22 @@ REQUEST_TIMEOUT = 300
 TEMPERATURE = 0.0
 
 RXNAV_BASE_URL = "https://rxnav.nlm.nih.gov/REST"
-ICD10_KB_PATH = os.getenv("ICD10_KB_PATH", "")
 
-INPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "input")
+_PROJECT_DIR = os.path.dirname(os.path.dirname(__file__))
+
+# --- ICD-10 linker (hybrid retrieval trên KB TT06 local) ---
+ICD_KB_PATH = os.getenv("ICD_KB_PATH", os.path.join(_PROJECT_DIR, "data", "icd10_tt06.json"))
+EMBED_CACHE_DIR = os.path.join(_PROJECT_DIR, "data", "embed_cache")
+# Model embedding — đổi biến này để test model nhẹ hơn (vd "paraphrase-multilingual", "nomic-embed-text")
+OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "bge-m3")
+USE_EMBEDDING = os.getenv("USE_EMBEDDING", "1") not in ("0", "false", "False", "")
+# Có embed cả tên mã lá không (chính xác hơn cho chẩn đoán cụ thể, nhưng ~18k vector, chậm lần đầu)
+EMBED_LEAVES = os.getenv("EMBED_LEAVES", "1") not in ("0", "false", "False", "")
+ICD_LEXICAL_WEIGHT = float(os.getenv("ICD_LEXICAL_WEIGHT", "0.5"))  # trọng số lexical trong fuse
+ICD_MIN_SCORE = float(os.getenv("ICD_MIN_SCORE", "0.45"))          # ngưỡng chặn emit sai
+ICD_TOP_K = int(os.getenv("ICD_TOP_K", "10"))
+
+INPUT_DIR = os.path.join(_PROJECT_DIR, "input")
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
 
 ASSERTION_VALID_TYPES = {"THUỐC", "CHẨN_ĐOÁN", "TRIỆU_CHỨNG"}
