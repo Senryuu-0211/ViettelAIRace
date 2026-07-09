@@ -11,7 +11,7 @@ PORT = 9090
 UI_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(UI_DIR)
 INPUT_DIR = os.path.join(PROJECT_DIR, "input")
-GOLD_DIR = os.path.join(UI_DIR, "gold")
+GOLD_DIR = os.path.join(PROJECT_DIR, "pipeline", "output")
 
 os.makedirs(GOLD_DIR, exist_ok=True)
 

@@ -1,0 +1,29 @@
+name: 3dgs_vai
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - pip
+  - cuda-toolkit=11.8
+  - plyfile
+  - tqdm
+  - scipy
+  - pandas
+  - scikit-image
+  - opencv
+  - imageio
+  - pyyaml
+  - pip:
+    - --extra-index-url https://download.pytorch.org/whl/cu118
+    - torch==2.3.1
+    - torchvision==0.18.1
+    - torchaudio==2.3.1
+    - lpips
+    - tensorboard
+    - gaussian-splatting/submodules/diff-gaussian-rasterization
+    - gaussian-splatting/submodules/simple-knn
+    - gaussian-splatting/submodules/fused-ssim
+    - trimesh

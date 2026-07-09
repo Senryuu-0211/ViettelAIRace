@@ -15,10 +15,7 @@ env/
 # Input data (test set, không commit)
 input/
 
-# UI labels
-ui/gold/
-
-# Pipeline output
+# Pipeline output (labels + results)
 pipeline/output/
 
 # OS junk
