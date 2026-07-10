@@ -1,11 +1,12 @@
 """
-Embedding client cho ICD linker — gọi Ollama, cache theo tên model.
-Đổi OLLAMA_EMBED_MODEL trong config để thử model nhẹ hơn; cache tách riêng
-mỗi model nên chuyển qua lại không phải tính lại từ đầu.
+Embedding client cho ICD linker — gọi Ollama qua HTTP API, cache theo tên model.
+Dùng httpx gọi trực tiếp http://localhost:11434/api/embed để tránh bug port của
+thư viện ollama Python >=0.5.
 """
 import hashlib
 import os
 
+import httpx
 import numpy as np
 
 from pipeline.config import OLLAMA_BASE_URL, OLLAMA_EMBED_MODEL, EMBED_CACHE_DIR
@@ -17,9 +18,14 @@ def _l2norm(m: np.ndarray) -> np.ndarray:
     return m / n
 
 
-def _client(model: str):
-    from langchain_ollama import OllamaEmbeddings
-    return OllamaEmbeddings(model=model, base_url=OLLAMA_BASE_URL)
+def _call_embed(input_data, model: str):
+    resp = httpx.post(
+        f"{OLLAMA_BASE_URL}/api/embed",
+        json={"model": model, "input": input_data},
+        timeout=300,
+    )
+    resp.raise_for_status()
+    return resp.json()["embeddings"]
 
 
 def _cache_path(model: str, cache_key: str, texts_hash: str) -> str:
@@ -35,8 +41,7 @@ def embed_corpus(texts: list[str], cache_key: str, model: str = None) -> np.ndar
     if os.path.exists(path):
         return np.load(path)["v"]
 
-    client = _client(model)
-    vecs = np.asarray(client.embed_documents(texts), dtype=np.float32)
+    vecs = np.asarray(_call_embed(texts, model), dtype=np.float32)
     vecs = _l2norm(vecs)
     os.makedirs(EMBED_CACHE_DIR, exist_ok=True)
     np.savez_compressed(path, v=vecs)
@@ -46,5 +51,5 @@ def embed_corpus(texts: list[str], cache_key: str, model: str = None) -> np.ndar
 def embed_query(text: str, model: str = None) -> np.ndarray:
     """Embed + L2-normalize một query (vector 1 chiều)."""
     model = model or OLLAMA_EMBED_MODEL
-    v = np.asarray(_client(model).embed_query(text), dtype=np.float32)
+    v = np.asarray(_call_embed(text, model)[0], dtype=np.float32)
     return _l2norm(v[None, :])[0]
