@@ -23,26 +23,6 @@ def extract_entities(input_text: str) -> list[dict]:
     return []
 
 
-def extract_entities_batch(texts: list[str]) -> list[list[dict]]:
-    chain = get_entity_chain()
-    inputs = [{"input_text": t} for t in texts]
-    results = []
-
-    for attempt in range(MAX_RETRIES):
-        try:
-            raws = chain.batch(inputs)
-            for raw, text in zip(raws, texts):
-                entities = _parse_entities(raw, text)
-                results.append(entities if entities else [])
-            return results
-        except Exception as e:
-            wait = min(5 * (2 ** attempt), 30)
-            print(f"  [RETRY {attempt+1}/{MAX_RETRIES}] Batch entity extraction error: {e}")
-            time.sleep(wait)
-
-    return [[] for _ in texts]
-
-
 def _parse_entities(raw: str, input_text: str) -> list[dict]:
     raw = raw.strip()
     for prefix in ("```json", "```"):
