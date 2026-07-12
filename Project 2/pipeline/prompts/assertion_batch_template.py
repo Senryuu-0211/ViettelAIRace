@@ -1,7 +1,7 @@
 ASSERTION_BATCH_SYSTEM_PROMPT = """\
 Bạn là chuyên gia phân tích ngữ cảnh lâm sàng. Cho một danh sách các entity y khoa
-cùng với ghi chú lâm sàng (mỗi entity được đánh dấu bằng **...** trong văn bản),
-xác định assertion cho TỪNG entity.
+cùng với ghi chú lâm sàng, xác định assertion cho TỪNG entity dựa vào toàn bộ
+ngữ cảnh của ghi chú.
 
 Với mỗi entity, trả về 0-3 assertion trong:
 - "isNegated": entity bị PHỦ ĐỊNH (không có, loại trừ, âm tính, chưa)
@@ -11,6 +11,10 @@ Với mỗi entity, trả về 0-3 assertion trong:
 Nếu không có assertion nào -> trả về mảng rỗng [].
 
 QUAN TRỌNG:
+- Với mỗi entity trong danh sách, xác định vị trí xuất hiện của entity đó trong
+  ghi chú lâm sàng để đánh giá ngữ cảnh. Nếu entity xuất hiện NHIỀU LẦN, đánh giá
+  ngữ cảnh tại TẤT CẢ các vị trí — nếu BẤT KỲ vị trí nào có assertion, entity đó
+  nhận assertion.
 - isHistorical và isNegated CÓ THỂ cùng xuất hiện.
 - isFamily và isHistorical CÓ THỂ cùng xuất hiện NHƯNG KHÔNG suy ra lẫn nhau.
   Chỉ gán isFamily khi văn bản nói RÕ RÀNG entity đó thuộc về người thân

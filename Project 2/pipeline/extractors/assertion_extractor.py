@@ -3,7 +3,7 @@ import re
 import time
 
 from pipeline.chains.assertion_chain import get_assertion_chain
-from pipeline.config import MAX_RETRIES, ASSERTION_VALID_TYPES, VALID_ASSERTIONS
+from pipeline.config import MAX_RETRIES, MAX_ASSERTION_BATCH, ASSERTION_VALID_TYPES, VALID_ASSERTIONS
 
 
 def extract_assertions_batch(input_text: str, entities: list[dict]) -> dict[str, list[str]]:
@@ -11,8 +11,19 @@ def extract_assertions_batch(input_text: str, entities: list[dict]) -> dict[str,
     if not eligible:
         return {}
 
+    chunks = [eligible[i:i + MAX_ASSERTION_BATCH] for i in range(0, len(eligible), MAX_ASSERTION_BATCH)]
+    result = {}
+
+    for chunk in chunks:
+        entity_list = "\n".join(f"- {e['text']} ({e['type']})" for e in chunk)
+        chunk_result = _call_assertion(input_text, entity_list)
+        result.update(chunk_result)
+
+    return result
+
+
+def _call_assertion(input_text: str, entity_list: str) -> dict[str, list[str]]:
     chain = get_assertion_chain()
-    entity_list = "\n".join(f"- {e['text']} ({e['type']})" for e in eligible)
 
     for attempt in range(MAX_RETRIES):
         try:
@@ -56,7 +67,32 @@ def _parse_batch_assertions(raw: str) -> dict[str, list[str]]:
     result = {}
     for key, val in data.items():
         if isinstance(val, list):
-            result[key] = [a for a in val if a in VALID_ASSERTIONS]
+            if val and isinstance(val[0], dict) and "text" in val[0]:
+                for item in val:
+                    if isinstance(item, dict) and "text" in item:
+                        text = item["text"]
+                        assertions = _extract_assertions(item.get("assertions", []))
+                        if text:
+                            result[text] = assertions
+            else:
+                result[key] = _extract_assertions(val)
+        elif isinstance(val, dict) and "text" in val:
+            text = val["text"]
+            assertions = _extract_assertions(val.get("assertions", []))
+            if text:
+                result[text] = assertions
+        elif isinstance(val, str):
+            result[key] = [val] if val in VALID_ASSERTIONS else []
         else:
             result[key] = []
     return result
+
+
+def _extract_assertions(val: list) -> list[str]:
+    res = []
+    for v in val:
+        if isinstance(v, str):
+            res.append(v)
+        elif isinstance(v, dict):
+            res.extend(x for x in v.values() if isinstance(x, str))
+    return [a for a in res if a in VALID_ASSERTIONS]

@@ -76,7 +76,19 @@ def _active_ingredient(drug_name: str) -> str:
     return parts[0]
 
 
-def lookup_drug(drug_name: str) -> list[str]:
+def lookup_drug(drug_name: str, drug: dict = None) -> list[str]:
+    if drug:
+        ingredient = (drug.get("ingredient") or "").strip()
+        strength = (drug.get("strength") or "").strip()
+        if ingredient:
+            search = f"{ingredient} {strength}".strip()
+            rxcui = _search_rxnorm(search)
+            if not rxcui:
+                rxcui = _search_rxnorm(ingredient)
+            if rxcui:
+                scd_codes = _get_scd_codes(rxcui)
+                return scd_codes if scd_codes else [rxcui]
+
     rxcui = _search_rxnorm(drug_name)
 
     if not rxcui:

@@ -9,6 +9,13 @@ Bạn là chuyên gia trích xuất khái niệm y khoa từ ghi chú lâm sàng
    - VD: "metoprolol 25mg po bid", "amlodipine 10 mg po daily",
      "aspirin 325mg", "Capsaicin 0.38 MG/ML", "prednisone", "atenolol"
 
+   Với mỗi THUỐC, trả thêm object "drug" tách các thành phần (CHỈ dùng từ CÓ SẴN
+   trong "text", KHÔNG được bịa):
+     "ingredient": tên hoạt chất (vd: "metoprolol", "docusate sodium")
+     "strength":   hàm lượng + đơn vị (vd: "25mg", "10 mg", "325mg"). Nếu không có → ""
+     "route":      đường dùng (vd: "po", "iv"). Nếu không có → ""
+     "frequency":  tần suất (vd: "bid", "daily", "prn"). Nếu không có → ""
+
 2. CHẨN_ĐOÁN: tên bệnh, hội chứng, tình trạng bệnh lý đã được CHẨN ĐOÁN CHÍNH THỨC.
    Chỉ gán CHẨN_ĐOÁN khi có từ khóa xác nhận chẩn đoán: "hội chứng", "bệnh",
    "rối loạn", "viêm", "xơ", "ung thư", "suy", hoặc văn cảnh nói rõ đây là
@@ -52,16 +59,19 @@ QUAN TRỌNG (PHẢI TUÂN THỦ TUYỆT ĐỐI):
 
 Ví dụ minh họa ranh giới entity (rule gộp CHỈ áp dụng THUỐC):
 Input: "...dùng metoprolol 25mg po bid và atenolol (uống hôm nay) do tăng huyết áp"
-Output: [{{"text": "metoprolol 25mg po bid", "type": "THUỐC"}},
-         {{"text": "atenolol", "type": "THUỐC"}},
+Output: [{{"text": "metoprolol 25mg po bid", "type": "THUỐC",
+          "drug": {{"ingredient": "metoprolol", "strength": "25mg", "route": "po", "frequency": "bid"}}}},
+         {{"text": "atenolol", "type": "THUỐC",
+          "drug": {{"ingredient": "atenolol", "strength": "", "route": "", "frequency": ""}}}},
          {{"text": "tăng huyết áp", "type": "CHẨN_ĐOÁN"}}]
 
 Ví dụ PHẢN DIỆN — không được gộp CHẨN_ĐOÁN/TRIỆU_CHỨNG liền kề:
 Input: "...clonazepam 1.5 mg po qhs điều trị lo âu mất ngủ"
-SAI:   [{{"text": "lo âu mất ngủ", "type": "TRIỆU_CHỨNG"}}]   ← gộp 2 khái niệm, SAI
-ĐÚNG:  [{{"text": "clonazepam 1.5 mg po qhs", "type": "THUỐC"}},
-        {{"text": "lo âu", "type": "TRIỆU_CHỨNG"}},
-        {{"text": "mất ngủ", "type": "TRIỆU_CHỨNG"}}]
+SAI:   [{{"text": "lo âu mất ngủ", "type": "TRIỆU_CHỨNG"}}]
+ĐÚNG:  [{{"text": "clonazepam 1.5 mg po qhs", "type": "THUỐC",
+          "drug": {{"ingredient": "clonazepam", "strength": "1.5 mg", "route": "po", "frequency": "qhs"}}}},
+         {{"text": "lo âu", "type": "TRIỆU_CHỨNG"}},
+         {{"text": "mất ngủ", "type": "TRIỆU_CHỨNG"}}]
 
 Ví dụ trích entity trùng lặp (2 dòng khác nhau, cùng text):
 Input: "8. docusate sodium 100 mg po bid điều trị táo bón
@@ -69,7 +79,7 @@ Input: "8. docusate sodium 100 mg po bid điều trị táo bón
 Output PHẢI có 2 entity {{"text": "táo bón", "type": "TRIỆU_CHỨNG"}} ở 2 vị trí khác nhau.
 
 Trả về CHỈ JSON array, KHÔNG markdown, KHÔNG giải thích:
-[{{"text": "...", "type": "THUỐC"}}, ...]
+[{{"text": "...", "type": "THUỐC", "drug": {{"ingredient": "...", "strength": "...", "route": "...", "frequency": "..."}}}}, ...]
 """
 
 ENTITY_USER_TEMPLATE = "Ghi chú lâm sàng:\n\n{input_text}"

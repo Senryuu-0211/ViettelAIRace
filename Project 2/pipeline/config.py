@@ -16,6 +16,7 @@ NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "")
 MAX_RETRIES = 3
 REQUEST_TIMEOUT = 300
 TEMPERATURE = 0.0
+MAX_ASSERTION_BATCH = int(os.getenv("MAX_ASSERTION_BATCH", "8"))
 
 RXNAV_BASE_URL = "https://rxnav.nlm.nih.gov/REST"
 
@@ -30,8 +31,8 @@ USE_EMBEDDING = os.getenv("USE_EMBEDDING", "1") not in ("0", "false", "False", "
 # Có embed cả tên mã lá không (chính xác hơn cho chẩn đoán cụ thể, nhưng ~18k vector, chậm lần đầu)
 EMBED_LEAVES = os.getenv("EMBED_LEAVES", "1") not in ("0", "false", "False", "")
 ICD_LEXICAL_WEIGHT = float(os.getenv("ICD_LEXICAL_WEIGHT", "0.5"))  # trọng số lexical trong fuse
-ICD_MIN_SCORE = float(os.getenv("ICD_MIN_SCORE", "0.45"))          # ngưỡng chặn emit sai
-ICD_TOP_K = int(os.getenv("ICD_TOP_K", "10"))
+ICD_MIN_SCORE = float(os.getenv("ICD_MIN_SCORE", "0.8"))           # ngưỡng chặn emit sai
+ICD_TOP_K = int(os.getenv("ICD_TOP_K", "3"))
 
 INPUT_DIR = os.path.join(_PROJECT_DIR, "input")
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
