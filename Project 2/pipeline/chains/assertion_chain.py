@@ -18,6 +18,7 @@ def get_assertion_chain() -> RunnableSerializable:
             model=OLLAMA_MODEL,
             base_url=OLLAMA_BASE_URL,
             temperature=TEMPERATURE,
+            reasoning=False,  # tắt thinking mode của qwen3.5
         )
         prompt = ChatPromptTemplate.from_messages([
             ("system", ASSERTION_BATCH_SYSTEM_PROMPT),

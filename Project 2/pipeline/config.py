@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3.5:4b-q4_K_M")
 
 MAX_RETRIES = 3
 REQUEST_TIMEOUT = 300
@@ -20,9 +20,11 @@ ICD_KB_PATH = os.getenv("ICD_KB_PATH", os.path.join(_PROJECT_DIR, "data", "icd10
 EMBED_CACHE_DIR = os.path.join(_PROJECT_DIR, "data", "embed_cache")
 # Model embedding — đổi biến này để test model nhẹ hơn (vd "paraphrase-multilingual", "nomic-embed-text")
 OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "bge-m3")
-USE_EMBEDDING = os.getenv("USE_EMBEDDING", "1") not in ("0", "false", "False", "")
-# Có embed cả tên mã lá không (chính xác hơn cho chẩn đoán cụ thể, nhưng ~18k vector, chậm lần đầu)
-EMBED_LEAVES = os.getenv("EMBED_LEAVES", "1") not in ("0", "false", "False", "")
+# Mặc định 0 (lexical-only) — nhanh, ổn trên CPU. Bật "1" trên máy GPU (kèm lexical-gating).
+USE_EMBEDDING = os.getenv("USE_EMBEDDING", "0") not in ("0", "false", "False", "")
+# Có embed cả tên mã lá không (chính xác hơn cho chẩn đoán cụ thể, nhưng ~18k vector, chậm trên CPU)
+# Mặc định 0 (chỉ ~2090 category) cho nhẹ; bật "1" trên máy GPU để thêm độ chính xác cấp mã lá.
+EMBED_LEAVES = os.getenv("EMBED_LEAVES", "0") not in ("0", "false", "False", "")
 ICD_LEXICAL_WEIGHT = float(os.getenv("ICD_LEXICAL_WEIGHT", "0.5"))  # trọng số lexical trong fuse
 ICD_MIN_SCORE = float(os.getenv("ICD_MIN_SCORE", "0.45"))          # ngưỡng chặn emit sai
 ICD_TOP_K = int(os.getenv("ICD_TOP_K", "10"))

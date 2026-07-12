@@ -126,7 +126,7 @@ def lookup_diagnosis(diagnosis_text: str) -> list[str]:
         return []
 
     lex_top = _lexical_topk(qnorm, ICD_TOP_K)          # [(idx, lex_score)]
-    candidates = {idx: lex for idx, lex in lex_top}
+    lex_by_idx = {idx: sc for idx, sc in lex_top}
 
     emb_scores = None
     if USE_EMBEDDING:
@@ -136,20 +136,34 @@ def lookup_diagnosis(diagnosis_text: str) -> list[str]:
             qv = embed_query(qnorm)
             emb_scores = _INDEX["emb"] @ qv               # cosine (đã L2-norm)
             for idx in np.argsort(-emb_scores)[:ICD_TOP_K]:
-                candidates.setdefault(int(idx), _lexical_one(qnorm, int(idx)))
+                lex_by_idx.setdefault(int(idx), _lexical_one(qnorm, int(idx)))
         except Exception:
             emb_scores = None
 
-    # fuse
-    w = ICD_LEXICAL_WEIGHT if emb_scores is not None else 1.0
-    best_idx, best_score = None, -1.0
-    for idx, lex in candidates.items():
-        emb = float(emb_scores[idx]) if emb_scores is not None else 0.0
-        fused = w * lex + (1.0 - w) * emb
-        if fused > best_score:
-            best_score, best_idx = fused, idx
+    pool = list(lex_by_idx.keys())
+    if not pool:
+        return []
 
-    if best_idx is None or best_score < ICD_MIN_SCORE:
+    lex_raw = {i: lex_by_idx[i] for i in pool}
+    emb_raw = {i: (float(emb_scores[i]) if emb_scores is not None else 0.0) for i in pool}
+
+    if emb_scores is not None:
+        # min-max normalize từng tín hiệu TRONG pool -> 2 thang so sánh được,
+        # nếu không embedding (cosine ~0.6) luôn thua lexical (ratio ~0.9).
+        def _mm(d):
+            vals = list(d.values())
+            lo, hi = min(vals), max(vals)
+            rng = hi - lo
+            return {k: ((v - lo) / rng if rng > 1e-9 else 1.0) for k, v in d.items()}
+        lexN, embN = _mm(lex_raw), _mm(emb_raw)
+        w = ICD_LEXICAL_WEIGHT
+        fused = {i: w * lexN[i] + (1.0 - w) * embN[i] for i in pool}
+    else:
+        fused = lex_raw
+
+    best_idx = max(pool, key=lambda i: fused[i])
+    # ngưỡng emit dùng điểm THÔ tốt nhất (tránh emit khi cả 2 tín hiệu đều yếu)
+    if max(lex_raw[best_idx], emb_raw[best_idx]) < ICD_MIN_SCORE:
         return []
     return list(_INDEX["code_lists"][best_idx])
 

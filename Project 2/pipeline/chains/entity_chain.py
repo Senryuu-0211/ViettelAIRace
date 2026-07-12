@@ -18,6 +18,7 @@ def get_entity_chain() -> RunnableSerializable:
             model=OLLAMA_MODEL,
             base_url=OLLAMA_BASE_URL,
             temperature=TEMPERATURE,
+            reasoning=False,  # tắt thinking mode của qwen3.5 (kẻo chèn token suy luận, phá JSON + rất chậm)
         )
         prompt = ChatPromptTemplate.from_messages([
             ("system", ENTITY_SYSTEM_PROMPT),
