@@ -5,7 +5,7 @@ __pycache__/
 venv/
 env/
 .ipynb_checkpoints/
-
+venv_wsl
 # Claude config (không commit)
 .claude/
 
@@ -16,12 +16,15 @@ env/
 # UI labels
 ui/gold/
 
-# Pipeline output
-pipeline/output/
+# Large artifacts
+*.zip
+*.pth
+*.ply
 
 # Data (large files, not tracked)
 Project 1/VAI_NVS_DATA/
-
+Project 1/output*/
+Project 1/VAI_NVS_DATA_ROUND2/
 # OS junk
 Thumbs.db
 .DS_Store

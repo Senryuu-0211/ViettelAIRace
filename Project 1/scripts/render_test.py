@@ -50,6 +50,7 @@ def main():
     parser.add_argument("--output_dir", type=str, required=True)
     parser.add_argument("--sh_degree", type=int, default=3)
     parser.add_argument("--white_background", action="store_true")
+    parser.add_argument("--iteration", type=int, default=None, help="Specific iteration to load (default: latest)")
     
     args = parser.parse_args()
     
@@ -76,7 +77,10 @@ def main():
         print("No iterations found")
         sys.exit(1)
     
-    latest_iter = max(iters)
+    if args.iteration is not None:
+        latest_iter = args.iteration
+    else:
+        latest_iter = max(iters)
     checkpoint_path = os.path.join(checkpoints_dir, f"iteration_{latest_iter}", "point_cloud.ply")
     
     print(f"Loading checkpoint from iteration {latest_iter}")

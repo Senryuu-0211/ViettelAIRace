@@ -3,6 +3,8 @@ import sys
 import subprocess
 import yaml
 import argparse
+import glob
+import re
 
 def main():
     parser = argparse.ArgumentParser(description="Train 3DGS on a specific scene")
@@ -69,6 +71,30 @@ def main():
         cmd.extend(["--densification_interval", str(config["densification_interval"])])
     if "opacity_reset_interval" in config:
         cmd.extend(["--opacity_reset_interval", str(config["opacity_reset_interval"])])
+        
+    # Checkpoints interval (every 1000 iterations up to max iterations)
+    max_iters = config.get("iterations", 30000)
+    checkpoint_iters = [str(i) for i in range(1000, max_iters + 1, 1000)]
+    cmd.extend(["--checkpoint_iterations"] + checkpoint_iters)
+    
+    # Auto-resume logic
+    checkpoints = glob.glob(os.path.join(model_path, "chkpnt*.pth"))
+    if checkpoints:
+        # Extract iteration numbers to find the latest
+        latest_chkpnt = None
+        max_iter = -1
+        for cp in checkpoints:
+            match = re.search(r"chkpnt(\d+)\.pth", os.path.basename(cp))
+            if match:
+                iter_num = int(match.group(1))
+                if iter_num > max_iter:
+                    max_iter = iter_num
+                    latest_chkpnt = cp
+        
+        if latest_chkpnt:
+            print(f"Resuming from checkpoint: {latest_chkpnt}")
+            cmd.extend(["--start_checkpoint", latest_chkpnt])
+
     if "densify_from_iter" in config:
         cmd.extend(["--densify_from_iter", str(config["densify_from_iter"])])
     if "densify_until_iter" in config:

@@ -16,7 +16,7 @@ env/
 input/
 
 # Pipeline output (labels + results)
-pipeline/output/
+LLM-solution/pipeline/output/
 
 # OS junk
 Thumbs.db
