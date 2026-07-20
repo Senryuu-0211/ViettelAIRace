@@ -6,13 +6,16 @@ import argparse
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output_dir", type=str, required=True)
+    parser.add_argument("--private_dir", type=str, required=True, help="Path to private dataset to only include those scenes")
+    parser.add_argument("--zip_name", type=str, default="submission.zip", help="Name of the output zip file")
     args = parser.parse_args()
 
     submission_dir = os.path.join(args.output_dir, "submission_temp")
     os.makedirs(submission_dir, exist_ok=True)
 
-    # Find all scenes in output_dir
-    scenes = [d for d in os.listdir(args.output_dir) if os.path.isdir(os.path.join(args.output_dir, d)) and d != "submission_temp"]
+    # Only include scenes that are in the private dataset
+    private_scenes = [d for d in os.listdir(args.private_dir) if os.path.isdir(os.path.join(args.private_dir, d))]
+    scenes = [d for d in os.listdir(args.output_dir) if os.path.isdir(os.path.join(args.output_dir, d)) and d != "submission_temp" and d in private_scenes]
 
     # We need to map scene names to scene_001, scene_002... format
     # The README says:
@@ -31,10 +34,10 @@ def main():
             dest_scene_dir = os.path.join(submission_dir, scene)
             os.makedirs(dest_scene_dir, exist_ok=True)
             for file in os.listdir(renders_dir):
-                if file.lower().endswith('.png'):
+                if file.lower().endswith(('.png', '.jpg', '.jpeg')):
                     shutil.copy2(os.path.join(renders_dir, file), os.path.join(dest_scene_dir, file))
                     
-    zip_path = os.path.join(args.output_dir, "submission_round1.zip")
+    zip_path = os.path.join(args.output_dir, args.zip_name)
     print(f"Creating zip file: {zip_path}")
     
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:

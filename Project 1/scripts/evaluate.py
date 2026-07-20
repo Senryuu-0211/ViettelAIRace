@@ -1,6 +1,9 @@
 import os
 import argparse
 import json
+import ssl
+# Fix SSL certificate issues on Windows for model downloads
+ssl._create_default_https_context = ssl._create_unverified_context
 import torch
 import numpy as np
 from PIL import Image

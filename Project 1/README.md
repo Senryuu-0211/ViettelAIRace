@@ -153,7 +153,7 @@ Project 1/
 
 ### Số lượng scene
 
-| Tập | Số scene | Có ground truth |
+| Tập | Số scene | Có ground truth 
 |---|---|---|
 | public_set | 5 | Có |
 | private_set1 | 8 | Không |

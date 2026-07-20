@@ -16,7 +16,7 @@ env/
 input/
 
 # Pipeline output (labels + results)
-pipeline/output/
+LLM-solution/pipeline/output/
 
 # Embedding cache (dẫn xuất, regenerable, theo model)
 data/embed_cache/
