@@ -142,6 +142,44 @@ Giá biên: **TPOT 7.41 đ/ms** · TTFT 0.227 đ/ms ⇒ không có đường vò
 `s_tpot` 0.444 → 0.877 ⇒ **≈ 83đ** (giữ TTFT 55ms) + vá fail 0.86.
 Script: `tools/requant_int4_full.py`.
 
+### 4a. ✅ MÔ HÌNH ĐÃ HIỆU CHUẨN — P1 đã giải xong câu hỏi băng thông (2026-07-23)
+
+**P1 (bỏ `--quantization=fp8`) → 46.78** · ttft 61/100 · fail 8 · **TPOT suy ra 5.894 ms** (nền 4.125).
++868 MB byte ⇒ **+1.769 ms**. ⇒ **Decode ĐÚNG LÀ bandwidth-bound.**
+
+```
+TPOT(ms) = byte_đọc_mỗi_step(MB) / 490.7  +  1.125
+                                  ↑ GB/s      ↑ overhead cố định (ms)
+```
+Khớp cả hai điểm đo với sai số 0.000 ms. Dự đoán tiên nghiệm là 5.57, đo được 5.894 ⇒ mô hình đúng cả chiều lẫn độ lớn.
+
+### 🔑 PHÁT HIỆN LỚN NHẤT: bản AWQ đang mất trắng ~6.5 điểm vì KERNEL
+
+| Cấu hình | đọc/step | TPOT dự báo | điểm dự báo | điểm THẬT |
+|---|---:|---:|---:|---:|
+| BF16 (P1) | 2340 MB | 5.89 ms | 48.6 | **46.78** ✓ |
+| FP8 (59.32) | 1472 MB | 4.12 ms | 59.3 | **59.32** ✓ |
+| **AWQ hiện tại (asym)** | **1055 MB** | **3.27 ms** | **65.8** | **59.33** ❌ |
+
+AWQ lẽ ra phải ~65.8. Chênh **6.5 điểm ≈ 0.85 ms** = **chi phí kernel của `W4A16_ASYM`** (có `weight_zero_point` ⇒ không vào được Marlin), ăn đúng bằng phần lợi băng thông.
+⇒ **Ưu tiên số 1: requant sang `W4A16` ĐỐI XỨNG.** Không cần vá vLLM, không cần đổi gì khác.
+
+### Lộ trình có số
+
+| Bước | đọc/step | TPOT | điểm (6 fail / 0 fail) |
+|---|---:|---:|---:|
+| hiện tại (FP8) | 1472 | 4.12 | 59.3 / 60.2 |
+| **W4A16 đối xứng** (`--stage lmhead` bỏ lm_head) | 1055 | 3.27 | **65.8 / 66.8** |
+| **+ lm_head INT4** (`--stage lmhead`) | 857 | 2.87 | **69.2 / 70.2** |
+| **+ conv INT4** (`--stage full`, cần vá) | 609 | 2.37 | **73.8 / 74.8** |
+
+**Trần của riêng nhánh byte ≈ 75.** Muốn 80+ phải cắt thêm **overhead 1.125 ms** (T4 version / T5 OMP / đường ra SSE-IPC). Overhead → 0.5 ms cùng 609 MB ⇒ TPOT 1.74 ⇒ **~80**.
+
+### 6 fail là TRIỆU CHỨNG, không phải bệnh riêng
+P1 chậm hơn ⇒ fail **6 → 8**. Tức fail nhạy với độ trễ (timeout), không phải lỗi tất định lúc khởi động như tôi đoán trước đó. ⇒ **TPOT giảm thì fail sẽ tự giảm**, không cần vá riêng.
+
+---
+
 ### 4b. 🔴 CHẶN ĐƯỜNG: vLLM KHÔNG quantize được conv proj (đã kiểm chứng 2026-07-23)
 
 `ShortConv.__init__` (`short_conv.py`) **không nhận `quant_config`**; `Lfm2ShortConvDecoderLayer` cũng không truyền vào. Hai Linear đó dùng `UnquantizedLinearMethod`.

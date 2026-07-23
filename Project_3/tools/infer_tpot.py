@@ -101,7 +101,31 @@ def gain_if(score, p50, p95, fail, new_tpot, total=420, fix_fails=False):
 KNOWN = [
     ("59.32-fp8  (BASELINE)", 59.32, 55, 79, 6),
     ("T1-chunk4096",          58.44, 58, 84, 6),
+    ("P1-bf16-probe",         46.78, 61, 100, 8),
 ]
+
+# ── MÔ HÌNH ĐÃ HIỆU CHUẨN (khớp 2 điểm đo thật, 2026-07-23) ──────────────────
+#   TPOT(ms) = byte_đọc_mỗi_step(MB) / BANDWIDTH + OVERHEAD
+#   Khớp từ: FP8 1472 MB -> 4.125 ms  và  BF16 2340 MB -> 5.894 ms
+#   Sai số tái tạo: 0.000 ms ở cả hai điểm.
+BANDWIDTH = 490.7   # MB/ms = GB/s — băng thông hiệu dụng của lát MiG
+OVERHEAD = 1.125    # ms — chi phí cố định mỗi step, KHÔNG phụ thuộc số byte
+                    # (dispatch, scheduler, IPC, detokenize, đẩy SSE trên 3 core)
+
+# Byte phải ĐỌC mỗi step decode cho từng cấu hình.
+# Không tính embed_tokens (268.4 MB): nó là phép gather, không phải GEMM.
+READ_MB = {
+    "BF16 thuần":                       2340,
+    "FP8 (bản 59.32)":                  1472,
+    "AWQ hiện tại (asym)":              1055,
+    "AWQ đối xứng + Marlin":            1055,
+    "  + lm_head INT4":                  857,
+    "  + conv INT4 (cần vá vLLM)":       609,
+}
+
+
+def tpot_from_bytes(read_mb):
+    return read_mb / BANDWIDTH + OVERHEAD
 
 
 def main():
@@ -136,6 +160,18 @@ def main():
             a = gain_if(sc, p50, p95, fail, y)
             b = gain_if(sc, p50, p95, fail, y, fix_fails=True)
             print(f"{y:13.1f} ms {a:13.1f} {b:13.1f}")
+        print(f"\n--- Dự báo theo MÔ HÌNH ĐÃ HIỆU CHUẨN "
+              f"(BW {BANDWIDTH:.0f} GB/s, overhead {OVERHEAD:.3f} ms) ---")
+        print(f"{'Cấu hình':30}{'đọc MB':>8}{'TPOT':>10}{'điểm 6 fail':>13}{'0 fail':>9}")
+        for cfg, mb in READ_MB.items():
+            y = tpot_from_bytes(mb)
+            print(f"{cfg:30}{mb:8.0f}{y:8.2f}ms"
+                  f"{gain_if(sc, p50, p95, fail, y):13.1f}"
+                  f"{gain_if(sc, p50, p95, fail, y, fix_fails=True):9.1f}")
+        print("  ⚠️ 'AWQ hiện tại (asym)' ĐO ĐƯỢC 59.33 chứ không phải ~66 như dự báo")
+        print("     -> chênh ~6.5đ (~0.85 ms) là CHI PHÍ KERNEL của W4A16_ASYM.")
+        print("     -> requant sang W4A16 ĐỐI XỨNG để vào Marlin là ưu tiên số 1.")
+
         print("\n--- Cần TTFT bao nhiêu để chạm 84 (ứng với từng mức TPOT) ---")
         mt, _, _ = infer(sc, p50, p95, fail)
         for y in (2.0, 1.8, 1.5, 1.2):

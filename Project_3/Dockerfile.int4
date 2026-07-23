@@ -5,4 +5,13 @@
 # Đường B (nén cả conv proj, cần vá vLLM) dùng Dockerfile.convquant.
 FROM vllm/vllm-openai:v0.22.1
 COPY awq_model_int4_lmhead/ /model/
-RUN python3 -c "import json; c=json.load(open('/model/config.json'))['quantization_config']; g=list(c['config_groups'].values())[0]['weights']; assert g.get('symmetric') == True, 'FAIL: checkpoint is asymmetric — requant with W4A16 symmetric'; assert g['num_bits'] == 4, 'FAIL: not 4-bit'"
+
+# Chặn sớm: checkpoint phải là W4A16 ĐỐI XỨNG (không có weight_zero_point).
+# Có zero_point -> trượt kernel Marlin -> mất ~0.85 ms/token = ~6.5 điểm,
+# đúng lỗi của bản AWQ cũ. Thà chết lúc build còn hơn phí một lượt nộp.
+RUN python3 -c "\
+import json; c=json.load(open('/model/config.json'))['quantization_config']; \
+g=list(c['config_groups'].values())[0]['weights']; \
+assert g['num_bits']==4, g; \
+assert g.get('symmetric') is True, 'CHECKPOINT BAT DOI XUNG -> requant lai voi SCHEME=W4A16'; \
+print('checkpoint W4A16 doi xung: OK')"
