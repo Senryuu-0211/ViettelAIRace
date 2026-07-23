@@ -172,13 +172,37 @@ def main():
     for root, _, files in os.walk(out_dir):
         for f in files:
             total += os.path.getsize(os.path.join(root, f))
-    target = "1.05-1.10 GB" if args.stage == "conv" else "0.85-0.90 GB"
-    print(f"\n[xong] {out_dir} = {total/1e9:.3f} GB   (mốc cần đạt: {target})")
-    if total / 1e9 > 1.25:
-        print("  ⚠️ VẪN ~1.3 GB -> recipe KHÔNG ăn vào conv proj. Xem CỬA 0 trong")
-        print("     tools/RUNBOOK_requant.md trước khi làm tiếp.")
-    print("  BƯỚC TIẾP (tools/RUNBOOK_requant.md): CỬA 3 smoke-test vLLM nạp được +")
-    print("  đúng kernel, CỬA 4 đo lại GPQA (cần >= 0.30 để giữ f_delta = 1).")
+    # Mốc kích thước theo từng stage. Gốc 1.324 GB; lm_head 268->70 MB, conv 336->88 MB.
+    BANDS = {
+        "lmhead": (1.10, 1.16, "chỉ lm_head được nén, conv CỐ Ý giữ BF16"),
+        "conv":   (1.05, 1.11, "chỉ conv được nén, lm_head giữ BF16"),
+        "full":   (0.85, 0.91, "nén cả lm_head lẫn conv"),
+    }
+    lo, hi, note = BANDS[args.stage]
+    gb = total / 1e9
+    print(f"\n[xong] {out_dir} = {gb:.3f} GB")
+    print(f"  mốc cho --stage {args.stage}: {lo:.2f}-{hi:.2f} GB  ({note})")
+    if gb > hi:
+        print(f"  ⚠️ LỚN HƠN MỐC -> recipe chưa nén được thứ cần nén cho stage này.")
+        print(f"     Kiểm `ignore` trong {out_dir}/config.json.")
+    elif gb < lo:
+        print(f"  ⚠️ NHỎ HƠN MỐC -> có thể đã nén nhầm layer không định nén.")
+
+    # Kiểm ĐỐI XỨNG ngay tại đây — đây là chỗ bản AWQ cũ hỏng, mất ~0.85 ms/token
+    # (~6.5 điểm) vì có weight_zero_point nên trượt kernel Marlin.
+    try:
+        import json
+        qc = json.load(open(os.path.join(out_dir, "config.json")))["quantization_config"]
+        for gname, g in qc["config_groups"].items():
+            w = g["weights"]
+            ok = w.get("symmetric") is True
+            print(f"  {gname}: num_bits={w['num_bits']} symmetric={w.get('symmetric')}"
+                  f" {'✅' if ok else '❌ BẤT ĐỐI XỨNG -> requant lại với SCHEME=W4A16'}")
+    except Exception as e:                       # noqa: BLE001
+        print(f"  (không đọc được config.json để kiểm đối xứng: {e})")
+
+    print("  BƯỚC TIẾP (tools/RUNBOOK_requant.md): nạp thử + xác nhận vào Marlin,")
+    print("  rồi đo GPQA (cần >= 0.30 để giữ f_delta = 1).")
 
 
 if __name__ == "__main__":
