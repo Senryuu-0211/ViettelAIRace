@@ -25,6 +25,14 @@ ui/gold/
 Project 1/VAI_NVS_DATA/
 Project 1/output*/
 Project 1/VAI_NVS_DATA_ROUND2/
+Project 1/VAI_NVS_DATA_ROUND2_UNDIST/
+
+# Secrets (DO NOT COMMIT)
+Project 1/viettel.pem
+
+# Logs
+Project 1/*.log
+
 # OS junk
 Thumbs.db
 .DS_Store

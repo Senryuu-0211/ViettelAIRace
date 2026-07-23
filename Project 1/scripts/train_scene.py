@@ -42,6 +42,8 @@ def main():
         "-s", source_path,
         "-m", model_path,
         "--disable_viewer",
+        "--data_device", "cpu",
+        "--eval",
     ]
     
     # Add hyperparams from config

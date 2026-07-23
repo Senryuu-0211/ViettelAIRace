@@ -1,9 +1,10 @@
-# Submission #2 — như docker-compose.yml + kv-cache-dtype=fp8
-# Chỉ nộp SAU KHI submission #1 (docker-compose.yml) đã pass và có điểm.
-# Nếu bản này crash -> flag kv-cache-dtype=fp8 là thủ phạm với hybrid LFM2.5
+# Spec — FP8 + ngram speculative decoding (v0.25.1)
+# Delta từ baseline 59.32: v0.22.1→v0.25.1, bỏ async, thêm spec.
+# v0.25.1 có fix spec corrupt trên hybrid (PR #40738).
+# Đã test: v0.25.1 load FP8 OK + spec ngram_gpu drafter khởi tạo OK (RTX 3060).
 services:
   model:
-    image: vllm/vllm-openai:v0.22.1
+    image: vllm/vllm-openai:v0.25.1-cu129-ubuntu2404
     entrypoint:
       - python3 #Don't change this to vllm-server
       - -m  #Don't change this to vllm-server
@@ -13,14 +14,13 @@ services:
       - --served-model-name=LFM2.5-1.2B-Instruct #Don't change this to vllm-server
       - --host=0.0.0.0 #Don't change this to vllm-server
       - --port=8000 #Don't change this to vllm-server
-      - --max-model-len=5120
+      - --max-model-len=16384
       - --max-num-seqs=16
       - --max-num-batched-tokens=8192
       - --enable-prefix-caching
       - --quantization=fp8
-      # Flag thử nghiệm của bản này: KV cache FP8 trên 6 attention layers
-      - --kv-cache-dtype=fp8
-      - '--compilation-config={"cudagraph_capture_sizes": [1, 2, 4, 8, 16]}'
+      - '--speculative-config={"method": "ngram_gpu", "num_speculative_tokens": 3, "prompt_lookup_min": 8, "prompt_lookup_max": 8}'
+      - '--compilation-config={"cudagraph_mode": "FULL", "cudagraph_capture_sizes": [1, 2, 4, 8, 16, 24, 32]}'
       - --gpu-memory-utilization=0.90
       - --tensor-parallel-size=1
       - --disable-log-stats

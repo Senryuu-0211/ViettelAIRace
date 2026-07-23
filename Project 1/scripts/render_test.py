@@ -96,7 +96,7 @@ def main():
             self.convert_SHs_python = False
             self.compute_cov3D_python = False
             self.debug = False
-            self.antialiasing = False
+            self.antialiasing = True
     pipeline = PipelineParams()
     
     print("Rendering test images...")

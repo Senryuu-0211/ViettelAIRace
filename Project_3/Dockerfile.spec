@@ -1,6 +1,7 @@
-# Image cho bản SPEC DECODING — vLLM MỚI (v0.25.1) chứa fix #40738
-# (GDN/conv-state rollback cho ngram spec) + prefix caching hybrid + spec×full-CUDA-graph.
+# Image cho bản SPEC DECODING — vLLM v0.25.1 chứa fix #40738
+# (conv/SSM-state rollback cho ngram spec trên hybrid model).
 # Build KHÔNG cần GPU. Runtime chạy trên H200.
-# Nếu v0.25.1 lỗi load AWQ/LFM2 -> hạ xuống v0.24.0 hoặc v0.23.0 (vẫn sau #40738).
-FROM vllm/vllm-openai:v0.25.1
+# Các tag tồn tại: v0.25.1-ubuntu2404, v0.25.1-cu129-ubuntu2404, v0.25.1
+# Nếu tag này lỗi load AWQ/LFM2 -> thử v0.25.1-ubuntu2404 hoặc nightly.
+FROM vllm/vllm-openai:v0.25.1-cu129-ubuntu2404
 COPY awq_model/ /model/

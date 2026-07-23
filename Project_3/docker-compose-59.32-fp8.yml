@@ -1,5 +1,5 @@
-# Submission #3 — như docker-compose.yml + speculative ngram_gpu
-# Chỉ nộp SAU KHI submission #1 pass. Flag ngram_gpu có thể crash hybrid LFM2.5
+# Submission 59.32 — FP8 + async-scheduling + CUDA graph
+# FP8 online quantization, public image, no build needed.
 services:
   model:
     image: vllm/vllm-openai:v0.22.1
@@ -17,8 +17,6 @@ services:
       - --max-num-batched-tokens=8192
       - --enable-prefix-caching
       - --quantization=fp8
-      # Flag thử nghiệm của bản này: speculative decoding ngram_gpu
-      - '--speculative-config={"method": "ngram_gpu", "num_speculative_tokens": 4, "prompt_lookup_max": 4, "prompt_lookup_min": 2}'
       - --async-scheduling
       - '--compilation-config={"cudagraph_capture_sizes": [1, 2, 4, 8, 16]}'
       - --gpu-memory-utilization=0.90
