@@ -1,0 +1,40 @@
+# CHỈ ĐỂ ĐO TẠI CHỖ — KHÔNG PHẢI BẢN NỘP.
+# Giống hệt docker-compose-59.32-fp8.yml, chỉ thêm `volumes:` để mount model từ máy
+# (bản nộp không có volumes vì Portal tự cấp /model).
+#
+#   MODEL_DIR=/duong/dan/LFM2.5-1.2B-Instruct docker compose -f docker-compose-local-A-baseline.yml up -d
+services:
+  model:
+    image: vllm/vllm-openai:v0.22.1
+    volumes:
+      - ${MODEL_DIR:?hay dat MODEL_DIR tro toi thu muc model BF16 goc}:/model:ro
+    entrypoint:
+      - python3
+      - -m
+      - vllm.entrypoints.openai.api_server
+    command:
+      - --model=/model
+      - --served-model-name=LFM2.5-1.2B-Instruct
+      - --host=0.0.0.0
+      - --port=8000
+      - --max-model-len=5120
+      - --max-num-seqs=16
+      - --max-num-batched-tokens=8192
+      - --enable-prefix-caching
+      - --quantization=fp8
+      - --async-scheduling
+      - '--compilation-config={"cudagraph_capture_sizes": [1, 2, 4, 8, 16]}'
+      - --gpu-memory-utilization=0.90
+      - --tensor-parallel-size=1
+      - --disable-log-stats
+      - --uvicorn-log-level=warning
+    ports:
+      - "8000:8000"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

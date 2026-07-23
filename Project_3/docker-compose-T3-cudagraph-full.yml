@@ -1,0 +1,47 @@
+# T3 — BIẾN DUY NHẤT: cudagraph_mode = FULL (trên nền FP8 của bản 59.32)
+#
+# LÝ DO (quan trọng): kết luận cũ "CUDA graph FULL trung tính" là SAI PHƯƠNG PHÁP —
+# nó so bản AWQ+FULL (59.33) với bản FP8+mặc-định (59.32), tức đổi 2 biến cùng lúc.
+# Hai hiệu ứng có thể đã triệt tiêu nhau. Bản này tách đúng 1 biến.
+#
+# CƠ CHẾ: trace cho thấy concurrency thực tế chỉ ~2 (đỉnh 6) -> decode gần như luôn ở
+# batch 1-2. Ở batch 1, thời gian mỗi step KHÔNG do GPU compute (model 1.2B) mà do
+# CPU launch ~16 layer x nhiều kernel. FULL graph gộp toàn bộ thành 1 lần launch.
+# Đây là đòn bẩy cơ học mạnh nhất cho TPOT trong tình huống host-bound + 3 CPU core.
+#
+# RỦI RO: nếu v0.22.1 không nhận key "cudagraph_mode", server sẽ không start.
+# Bản AWQ 59.33 trước đây ĐÃ chạy FULL trên chính version này -> cú pháp an toàn.
+services:
+  model:
+    image: vllm/vllm-openai:v0.22.1
+    entrypoint:
+      - python3 #Don't change this to vllm-server
+      - -m  #Don't change this to vllm-server
+      - vllm.entrypoints.openai.api_server #Don't change this to vllm-server
+    command:
+      - --model=/model #Don't change this to vllm-server
+      - --served-model-name=LFM2.5-1.2B-Instruct #Don't change this to vllm-server
+      - --host=0.0.0.0 #Don't change this to vllm-server
+      - --port=8000 #Don't change this to vllm-server
+      - --max-model-len=5120
+      - --max-num-seqs=16
+      - --max-num-batched-tokens=8192
+      - --enable-prefix-caching
+      - --quantization=fp8
+      - --async-scheduling
+      # <<< BIẾN DUY NHẤT ĐỔI: thêm "cudagraph_mode": "FULL"
+      - '--compilation-config={"cudagraph_mode": "FULL", "cudagraph_capture_sizes": [1, 2, 4, 8, 16]}'
+      - --gpu-memory-utilization=0.90
+      - --tensor-parallel-size=1
+      - --disable-log-stats
+      - --uvicorn-log-level=warning
+    ports:
+      - "8000:8000"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

@@ -1,0 +1,7 @@
+# Image cho bản INT4 ĐẦY ĐỦ (đã nén nốt conv.in_proj/out_proj, tuỳ chọn cả lm_head).
+# Sinh checkpoint bằng: tools/requant_int4_full.py --stage conv   (chạy trên máy H200)
+#
+# Mốc kiểm tra TRƯỚC KHI BUILD: thư mục checkpoint phải <= ~0.90 GB.
+# Nếu vẫn ~1.3 GB nghĩa là recipe chưa nén được conv proj -> build cũng vô ích.
+FROM vllm/vllm-openai:v0.22.1
+COPY awq_model_int4_conv/ /model/

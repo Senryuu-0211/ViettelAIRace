@@ -1,0 +1,43 @@
+# T5 — BIẾN DUY NHẤT: OMP_NUM_THREADS=1 (chống tranh chấp CPU)
+#
+# LÝ DO: máy chấm chỉ có 3 CPU core. Mặc định torch/OpenMP mở thread pool = số core và
+# các thread này BUSY-WAIT (spin) khi chờ việc -> cướp CPU của vòng lặp scheduler và của
+# API server (SSE streaming). Ở batch 1-2 (concurrency thực tế ~2), phần torch CPU song
+# song gần như vô dụng, nên ép 1 thread là thuần lợi.
+#
+# Đây là phép thử RẺ và đúng vào chẩn đoán "host-bound", không đổi bất kỳ cờ vLLM nào.
+services:
+  model:
+    image: vllm/vllm-openai:v0.22.1
+    environment:                 # <<< BIẾN DUY NHẤT ĐỔI: thêm khối environment
+      - OMP_NUM_THREADS=1
+    entrypoint:
+      - python3 #Don't change this to vllm-server
+      - -m  #Don't change this to vllm-server
+      - vllm.entrypoints.openai.api_server #Don't change this to vllm-server
+    command:
+      - --model=/model #Don't change this to vllm-server
+      - --served-model-name=LFM2.5-1.2B-Instruct #Don't change this to vllm-server
+      - --host=0.0.0.0 #Don't change this to vllm-server
+      - --port=8000 #Don't change this to vllm-server
+      - --max-model-len=5120
+      - --max-num-seqs=16
+      - --max-num-batched-tokens=8192
+      - --enable-prefix-caching
+      - --quantization=fp8
+      - --async-scheduling
+      - '--compilation-config={"cudagraph_capture_sizes": [1, 2, 4, 8, 16]}'
+      - --gpu-memory-utilization=0.90
+      - --tensor-parallel-size=1
+      - --disable-log-stats
+      - --uvicorn-log-level=warning
+    ports:
+      - "8000:8000"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

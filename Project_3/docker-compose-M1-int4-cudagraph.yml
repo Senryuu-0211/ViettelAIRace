@@ -1,0 +1,47 @@
+# M1 — MŨI CHÍNH nhắm 80+ điểm.
+#
+# Khác bản 59.32 ở HAI thứ, và hai thứ này tấn công HAI thành phần KHÁC NHAU của TPOT:
+#   (1) weight INT4 đầy đủ (~0.85 GB thay vì ~1.4 GB)  -> cắt phần BĂNG THÔNG  ~0.9 ms
+#   (2) cudagraph_mode FULL                            -> cắt phần OVERHEAD HOST ~1.0 ms
+#
+# Hạch toán TPOT dự kiến: 2.3 (bandwidth) + 0.16 (KV) + 1.5 (host)  = 4.0 ms  (hiện tại)
+#                      -> 1.4 (bandwidth) + 0.16 (KV) + 0.3 (host)  = 1.9 ms  (mục tiêu)
+#   s_tpot: 0.444 -> 0.812   =>  +18 điểm  =>  ~78-81 điểm (nếu TTFT giữ 55ms, 0 fail)
+#
+# KỶ LUẬT: nộp T3 (chỉ cudagraph FULL) TRƯỚC để biết riêng phần (2) đáng bao nhiêu.
+#          M1 chỉ thêm ĐÚNG 1 biến mới (INT4 đầy đủ) chồng lên kết quả T3.
+#
+# YÊU CẦU: build image trước — `docker build -f Dockerfile.int4 -t <user>/vllm-lfm2-int4:v1 .`
+# Bỏ --quantization: compressed-tensors tự nhận từ config.json của checkpoint.
+services:
+  model:
+    image: <YOUR_DOCKERHUB>/vllm-lfm2-int4:v1
+    entrypoint:
+      - python3 #Don't change this to vllm-server
+      - -m  #Don't change this to vllm-server
+      - vllm.entrypoints.openai.api_server #Don't change this to vllm-server
+    command:
+      - --model=/model #Don't change this to vllm-server
+      - --served-model-name=LFM2.5-1.2B-Instruct #Don't change this to vllm-server
+      - --host=0.0.0.0 #Don't change this to vllm-server
+      - --port=8000 #Don't change this to vllm-server
+      - --max-model-len=5120
+      - --max-num-seqs=16
+      - --max-num-batched-tokens=8192
+      - --enable-prefix-caching
+      - --async-scheduling
+      - '--compilation-config={"cudagraph_mode": "FULL", "cudagraph_capture_sizes": [1, 2, 4, 8, 16]}'
+      - --gpu-memory-utilization=0.90
+      - --tensor-parallel-size=1
+      - --disable-log-stats
+      - --uvicorn-log-level=warning
+    ports:
+      - "8000:8000"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

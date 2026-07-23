@@ -1,0 +1,37 @@
+# T1 — baseline 59.32 + GIẢM max-num-batched-tokens 8192 -> 4096
+# ĐỔI ĐÚNG 1 BIẾN so với bản 59.32 (để ablation sạch).
+# Giả thuyết: chunk prefill nhỏ hơn -> prefill không chiếm trọn 1 step ->
+# request đang decode nhả token đều hơn -> TPOT giảm (đổi chút TTFT, đang dư).
+services:
+  model:
+    image: vllm/vllm-openai:v0.22.1
+    entrypoint:
+      - python3 #Don't change this to vllm-server
+      - -m  #Don't change this to vllm-server
+      - vllm.entrypoints.openai.api_server #Don't change this to vllm-server
+    command:
+      - --model=/model #Don't change this to vllm-server
+      - --served-model-name=LFM2.5-1.2B-Instruct #Don't change this to vllm-server
+      - --host=0.0.0.0 #Don't change this to vllm-server
+      - --port=8000 #Don't change this to vllm-server
+      - --max-model-len=5120
+      - --max-num-seqs=16
+      - --max-num-batched-tokens=4096      # <<< BIẾN DUY NHẤT ĐỔI (8192 -> 4096)
+      - --enable-prefix-caching
+      - --quantization=fp8
+      - --async-scheduling
+      - '--compilation-config={"cudagraph_capture_sizes": [1, 2, 4, 8, 16]}'
+      - --gpu-memory-utilization=0.90
+      - --tensor-parallel-size=1
+      - --disable-log-stats
+      - --uvicorn-log-level=warning
+    ports:
+      - "8000:8000"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
