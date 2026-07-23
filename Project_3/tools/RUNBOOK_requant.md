@@ -1,163 +1,223 @@
-# RUNBOOK — Requant INT4 đầy đủ
+# RUNBOOK — nén model để hạ TPOT
 
-Ký hiệu: **[DOCKER]** = máy nào có Docker cũng chạy được, không cần GPU · **[3060]** = cần GPU của bạn Mr. Senryuu · **[PORTAL]** = nộp lên BTC.
+Cập nhật 2026-07-23. Đọc từ trên xuống, làm theo thứ tự.
 
-## Số liệu nền (đo từ header `awq_model/model.safetensors`)
-
-| Nhóm | dtype | MB |
-|---|---|---:|
-| `lm_head` + `embed_tokens` | BF16 ❌ | 536.9 |
-| FFN | I32 4-bit ✅ | 418.4 |
-| `conv.in_proj` / `out_proj` (10 layer) | BF16 ❌ | 335.7 |
-| attention | I32 4-bit ✅ | 32.7 |
-| **Tổng file** | | **1323.7** |
-
-**Byte đọc mỗi step decode** = 1323.7 − 268.4 (`embed_tokens` là *gather*, không phải GEMM) = **1055.3 MB** → ở ~600 GB/s = **1.76 ms**.
-
-| Sau bước | File | Đọc/step | Băng thông | Tiết kiệm | Điểm |
-|---|---:|---:|---:|---:|---:|
-| hiện tại | 1323.7 MB | 1055.3 MB | 1.76 ms | — | — |
-| **stage `conv`** | ~1076 MB | **807.6 MB** | 1.35 ms | −0.41 ms | **+3.1** |
-| **stage `full`** (thêm lm_head) | ~878 MB | **609.2 MB** | 1.02 ms | −0.33 ms | **+2.4** |
-
-> Mốc kiểm tra kích thước: sau `conv` phải ra **~1.05–1.10 GB**; sau `full` phải ra **~0.85–0.90 GB**. Ra khác nhiều nghĩa là recipe không ăn.
+Ký hiệu: **[DOCKER]** máy nào có Docker cũng được · **[GPU]** cần RTX 3060 · **[PORTAL]** nộp lên BTC.
 
 ---
 
-# CỬA 0 — [DOCKER] 5 phút. Kiểm tra vLLM có quantize nổi conv proj không
+## 0. Bối cảnh trong 10 dòng
 
-**Đây là cửa quan trọng nhất.** Nếu vLLM khai báo `conv.in_proj/out_proj` bằng `nn.Linear` thuần thì compressed-tensors **sẽ bỏ qua chúng**, và mọi công sức calibration đổ sông.
-
-```bash
-# 1. Tìm file model của kiến trúc lfm2
-docker run --rm --entrypoint bash vllm/vllm-openai:v0.22.1 -c \
-  "ls /usr/local/lib/python3*/dist-packages/vllm/model_executor/models/ | grep -i lfm"
-
-# 2. Xem in_proj/out_proj được khai báo bằng lớp gì
-docker run --rm --entrypoint bash vllm/vllm-openai:v0.22.1 -c \
-  "grep -nE 'in_proj|out_proj|quant_config|Linear' \
-   /usr/local/lib/python3*/dist-packages/vllm/model_executor/models/lfm2.py"
-```
-
-**Đọc kết quả:**
-
-| Thấy gì | Kết luận |
-|---|---|
-| `self.in_proj = MergedColumnParallelLinear(... quant_config=quant_config ...)` | ✅ **Quantize được** → chạy tiếp CỬA 1 |
-| `self.in_proj = ReplicatedLinear(... quant_config ...)` | ✅ như trên |
-| `self.in_proj = nn.Linear(...)` (không có `quant_config`) | ❌ **KHÔNG quantize được** → sang PHƯƠNG ÁN B ở cuối file |
-
-Làm luôn cùng lúc cho `lm_head` — tìm `ParallelLMHead` và xem có nhận `quant_config` không. Không có thì bỏ stage `full`.
+- Điểm tốt nhất **59.32**. Nút thắt là **TPOT = 4.125 ms** (suy ra từ điểm, không phải số làm tròn của Portal).
+- Đổi 1 ms TPOT ≈ **7.4 điểm**. Đổi 1 ms TTFT chỉ ≈ 0.23 điểm ⇒ **chỉ đánh vào TPOT**.
+- Mục tiêu **80+**: cần TPOT xuống **~1.8 ms** (có đội đạt 84 rồi, nên khả thi).
+- Concurrency thật của trace chỉ **~2** ⇒ decode chạy ở batch 1-2 ⇒ mọi cờ về batching vô nghĩa (đã chứng minh: chunked prefill thua).
+- 4.125 ms gồm 2 phần: **đọc weight** (byte) + **overhead host** (CPU 3 core). Runbook này lo phần byte. Phần overhead lo bằng `docker-compose-T3-cudagraph-full.yml`.
+- Checkpoint `awq_model/` hiện tại **mới nén được 1/3**: 886/1324 MB vẫn là float.
 
 ---
 
-# CỬA 1 — [3060] Requant, khoảng 1–2 tiếng
+## 1. ⛔ TRƯỚC KHI TỐN CÔNG: chạy P1
 
-```bash
-pip install "llmcompressor==0.13.*" datasets transformers accelerate
+**Có một mâu thuẫn chưa giải.** Byte đọc mỗi step:
 
-cd Project_3
-python3 tools/requant_int4_full.py --stage conv --calib-samples 256 --seqlen 2048
-```
+| Cấu hình | FFN | attn | conv | lm_head | **Tổng đọc/step** | @600 GB/s |
+|---|---:|---:|---:|---:|---:|---:|
+| BF16 thuần | 1610 | 126 | 336 | 268 | **2340 MB** | 3.90 ms |
+| FP8 (bản 59.32) | 805 | 63 | 336 | 268 | **1472 MB** | 2.45 ms |
+| AWQ (bản 59.33) | 418 | 33 | 336 | 268 | **1055 MB** | 1.76 ms |
 
-`--calib-samples 256 --seqlen 2048` là để vừa 12 GB VRAM. GPU lớn hơn thì dùng mặc định (512 / 4096).
+Mô hình băng thông dự đoán AWQ nhanh hơn FP8 **0.69 ms ⇒ +5 điểm**. Thực tế **59.33 vs 59.32 chênh 0.01**.
+⇒ Hoặc băng thông MiG cao hơn 600 GB/s nhiều, hoặc kernel `W4A16_ASYM` chậm ăn hết phần lợi.
 
-Script mặc định dùng **`W4A16` đối xứng**, khác bản cũ (`W4A16_ASYM`). Lý do: checkpoint cũ có `weight_zero_point`, dạng bất đối xứng dễ trượt khỏi kernel **Marlin** nhanh của vLLM — đây có thể mới là nguyên nhân thật khiến "AWQ ≈ FP8".
+**Toàn bộ runbook này chỉ có giá trị nếu decode thật sự bị chặn bởi băng thông.** P1 trả lời câu đó, tốn **1 lượt nộp và 0 GB đĩa**.
 
----
+### [PORTAL] Nộp `docker-compose-P1-bf16-probe.yml`
+Nó chỉ bỏ đúng một dòng `--quantization=fp8`. **Điểm sẽ tệ đi — đó là chuyện bình thường**, đây là phép đo chứ không phải bản ăn điểm.
 
-# CỬA 2 — [3060] Kiểm tra kích thước
-
-```bash
-du -sh awq_model_int4_conv/
-python3 tools/requant_int4_full.py --verify --out awq_model_int4_conv
-```
-
-Phải ra **~1.05–1.10 GB**. Nếu vẫn ~1.32 GB ⇒ recipe không ăn vào conv proj ⇒ **dừng, quay lại CỬA 0**.
-
----
-
-# CỬA 3 — [3060] vLLM nạp được không, và có THẬT SỰ dùng đường quantized không
-
-```bash
-docker run --rm --gpus all -p 8000:8000 \
-  -v $PWD/awq_model_int4_conv:/model:ro \
-  vllm/vllm-openai:v0.22.1 \
-  --model=/model --max-model-len=2048 --max-num-seqs=4 2>&1 | tee load.log
-```
-
-Kiểm trong `load.log`:
-
-```bash
-grep -iE "compressed|marlin|quant|ignore|skip|conv" load.log
-```
-
-| Thấy gì | Nghĩa là |
-|---|---|
-| `Using ... Marlin ... kernel` | ✅ tốt nhất — đường nhanh |
-| `CompressedTensorsWNA16` (không Marlin) | ⚠️ chạy được nhưng kernel chậm hơn, lợi ích có thể bị ăn mất |
-| conv proj bị liệt kê trong `ignored_layers` | ❌ vẫn không nén — quay lại CỬA 0 |
-| lỗi nạp weight | ❌ vLLM chưa hỗ trợ → PHƯƠNG ÁN B |
-
----
-
-# CỬA 4 — [3060] Đo lại độ chính xác
-
-`f(Δ)=1` khi `accuracy_drop ≤ 0.10`, baseline BF16 = **0.4** ⇒ bản nén phải đạt **≥ 0.30**.
-
-```bash
-pip install lm-eval
-lm_eval --model vllm \
-  --model_args pretrained=./awq_model_int4_conv,max_model_len=4096,gpu_memory_utilization=0.85 \
-  --tasks gpqa_diamond_zeroshot --batch_size 4 --seed 1234
-```
-
-⚠️ GPQA Diamond chỉ có 198 câu ⇒ sai số chuẩn ~0.035, tức **±0.07 ở mức 2σ**. Một lần đo ra 0.32 **không** đảm bảo an toàn. Chạy 2–3 seed rồi lấy mức thấp nhất mà quyết. Nếu rơi xuống ~0.30 thì quay lại `SCHEME=W4A16_ASYM` (chính xác hơn, đổi lại rủi ro kernel chậm).
-
----
-
-# CỬA 5 — [3060] Build & push image
-
-```bash
-docker build -f Dockerfile.int4 -t <user>/vllm-lfm2-int4:v1 .
-docker push <user>/vllm-lfm2-int4:v1
-```
-
-`Dockerfile.int4` đang `COPY awq_model_int4_conv/ /model/` — khớp tên thư mục ở CỬA 1.
-
----
-
-# CỬA 6 — [PORTAL] Nộp và đọc kết quả
-
-Sửa `image:` trong `docker-compose-M1-int4-cudagraph.yml` rồi nộp.
-
-⚠️ File M1 đổi **2 biến** (INT4 + cudagraph FULL). Muốn giữ kỷ luật 1 biến thì nộp **T3 (chỉ cudagraph FULL)** trước, hoặc bỏ dòng `cudagraph_mode` trong M1 để chỉ đo riêng INT4.
-
-Nộp xong:
-
+### Đọc kết quả
 ```bash
 python3 tools/infer_tpot.py --score <final_score> --p50 <ttft_p50_ms> --p95 <ttft_p95_ms> --fail <failed_count>
 ```
 
-**Đối chiếu dự đoán:** stage `conv` phải kéo TPOT hiệu dụng từ **4.125 ms → ~3.71 ms** (điểm ~62.5).
-- Đúng như dự đoán ⇒ mô hình băng thông chuẩn, chạy tiếp stage `full`.
-- Không nhúc nhích ⇒ **không phải bandwidth-bound**, toàn bộ 4 ms là overhead host ⇒ bỏ nhánh requant, dồn hết vào cudagraph/version.
+| TPOT suy ra | Kết luận | Làm gì |
+|---|---|---|
+| **≥ 5.3 ms** | Bandwidth-bound ✅ | Làm tiếp mục 2 trở đi |
+| **≤ 4.5 ms** | KHÔNG bandwidth-bound ❌ | **DỪNG runbook này.** Cả 4.125 ms là overhead host → dồn hết vào T3 / T4 / T5 |
 
-Đây là phép thử phân định rõ ràng — dù kết quả nào cũng học được một điều chắc chắn.
-
----
-
-# PHƯƠNG ÁN B — nếu CỬA 0 hoặc CỬA 3 trượt
-
-vLLM không nén được conv proj về INT4 thì hạ mục tiêu xuống **FP8** cho riêng nhóm đó:
-
-- 335.7 MB → **168 MB** (thay vì 88 MB)
-- đọc/step 1055 → 887 MB ⇒ **−0.28 ms** ⇒ **+2.1 điểm**
-
-Sửa `build_recipe()` trong `tools/requant_int4_full.py`: đổi `scheme="W4A16"` thành `scheme="FP8"` cho nhóm `conv.*`. Được ít hơn nhưng khả năng vLLM hỗ trợ cao hơn nhiều.
+> Song song, nộp luôn `docker-compose-T3-cudagraph-full.yml` (chỉ thêm `cudagraph_mode: "FULL"`). Cũng miễn phí, và tấn công nửa còn lại.
 
 ---
 
-# Việc KHÔNG nên làm
+## 2. Hai đường đi, chọn theo mức chấp nhận rủi ro
 
-**Đừng gỡ `lm_head.weight` trùng lặp** (dù `tie_embedding: true` nên nó trùng với `embed_tokens`). Nó chỉ tiết kiệm **dung lượng đĩa/VRAM**, không giảm byte đọc mỗi step — phép GEMM tính logits vẫn phải đọc đủ ma trận đó. Không được điểm nào. VRAM 18 GB thừa sức chứa, không phải nút thắt.
+| | Đường A — chỉ `lm_head` | Đường B — thêm cả conv proj |
+|---|---|---|
+| Vá vLLM? | **Không** | **Có** (`tools/patch_shortconv.py`) |
+| Cắt được | −198 MB | −446 MB |
+| Đọc/step | 1055 → **857 MB** | 1055 → **609 MB** |
+| TPOT dự kiến | 1.76 → **1.43 ms** | 1.76 → **1.02 ms** |
+| Điểm dự kiến | **+2.4** | **+5.5** |
+| File ra | ~1.13 GB | ~0.88 GB |
+| Lệnh | `--stage lmhead` | `--stage full` |
+
+**Vì sao conv proj cần vá:** `ShortConv.__init__` trong vLLM không nhận `quant_config`, nên `in_proj`/`out_proj` dùng `UnquantizedLinearMethod` và đi tìm tensor tên `weight`. Checkpoint nén ghi ra `weight_packed`/`weight_scale` ⇒ **nạp lỗi, bất kể nén INT4 hay FP8**. Đây cũng là lý do bản FP8 59.32 đang để nguyên 335.7 MB conv ở BF16.
+
+**Khuyến nghị:** làm **A trước** (không rủi ro, xác nhận cả quy trình chạy thông), rồi mới B.
+
+---
+
+## 3. Ngân sách ổ đĩa
+
+| Hạng mục | GB |
+|---|---:|
+| Image `vllm/vllm-openai:v0.22.1` | ~15 (thường đã có) |
+| Image `v0.25.1-cu129` (nhánh spec cũ) | ~15 — **xoá được** |
+| Model BF16 gốc | 2.4 |
+| pip torch CUDA + llmcompressor | ~7 mới / ~1 nếu đã có torch |
+| Dataset calibration | 0.05 (nhờ streaming, mặc định) |
+| Checkpoint xuất ra | ~1.1 mỗi stage |
+| Image mới build | ~1.1 |
+| Cache build | ~2 |
+
+**Thực tế: ~8–10 GB** nếu đã có image + torch. Máy trắng: ~30 GB.
+
+Lấy lại chỗ, theo thứ tự hiệu quả:
+1. **Docker Desktop → Settings → Resources → Advanced → Disk image location → ổ `D:`** (mạnh nhất, kéo cả chục GB khỏi C: vĩnh viễn — và né luôn chuyện `.vhdx` của WSL2 không tự co lại)
+2. `docker system df` rồi `docker image rm vllm/vllm-openai:v0.25.1-cu129-ubuntu2404` (~15 GB) + `docker builder prune -a`
+3. `export HF_HOME=/d/hf_cache` — model + dataset không đụng ổ C:
+4. Đo GPQA qua endpoint container, **đừng cài `vllm` vào python** (tiết kiệm ~4 GB) — xem CỬA 4
+
+---
+
+## 4. ĐƯỜNG A — chỉ nén `lm_head`
+
+### A1 [GPU] Requant (~1–2 tiếng)
+```bash
+pip install "llmcompressor==0.13.*" datasets transformers accelerate
+cd Project_3
+python3 tools/requant_int4_full.py --stage lmhead --calib-samples 256 --seqlen 2048
+```
+`--calib-samples 256 --seqlen 2048` để vừa 12 GB VRAM. Dataset dùng streaming nên chỉ tải ~50 MB.
+
+Recipe mặc định **`W4A16` đối xứng**, khác checkpoint cũ (`W4A16_ASYM`). Lý do: dạng bất đối xứng có `weight_zero_point`, dễ trượt khỏi kernel **Marlin** — nghi là nguyên nhân thật khiến "AWQ ≈ FP8".
+
+### A2 [GPU] Kiểm kích thước
+```bash
+du -sh awq_model_int4_lmhead/
+```
+Phải ra **~1.13 GB** (từ 1.32 GB). Vẫn 1.32 GB ⇒ recipe không ăn vào `lm_head`, dừng lại xem `config.json` mục `ignore`.
+
+### A3 [GPU] Nạp thử + xem đúng kernel chưa
+```bash
+docker run --rm --gpus all -v "$PWD/awq_model_int4_lmhead:/model:ro" \
+  vllm/vllm-openai:v0.22.1 --model=/model --max-model-len=2048 --max-num-seqs=4 \
+  2>&1 | tee load.log
+
+grep -iE "marlin|compressed|quant|ignore|lm_head" load.log
+```
+
+| Thấy gì | Nghĩa |
+|---|---|
+| `Marlin` kernel | ✅ tốt nhất |
+| `CompressedTensorsWNA16` không kèm Marlin | ⚠️ chạy được nhưng chậm hơn — lợi ích có thể bị ăn mất |
+| `lm_head` nằm trong `ignored_layers` | ❌ chưa nén, quay lại A1 |
+| lỗi nạp weight | ❌ vLLM không hỗ trợ nén `lm_head` → bỏ đường A, sang B |
+
+### A4 [GPU] Đo lại độ chính xác
+`f(Δ)=1` khi drop ≤ 0.10, baseline BF16 = 0.4 ⇒ **phải đạt ≥ 0.30**.
+
+Giữ container A3 đang chạy, rồi:
+```bash
+pip install lm-eval
+lm_eval --model local-completions \
+  --model_args base_url=http://localhost:8000/v1/completions,model=/model,num_concurrent=4 \
+  --tasks gpqa_diamond_zeroshot --seed 1234
+```
+
+⚠️ GPQA Diamond chỉ **198 câu** ⇒ sai số chuẩn ~0.035, tức **±0.07 ở 2σ**. Một lần đo ra 0.32 **không** đảm bảo an toàn. **Chạy 2–3 seed, lấy mức thấp nhất mà quyết.** Rơi xuống ~0.30 thì đổi `SCHEME=W4A16_ASYM` (chính xác hơn, đổi lại rủi ro kernel chậm).
+
+### A5 [GPU] Build & push
+```bash
+docker build -f Dockerfile.int4 -t <user>/vllm-lfm2-int4:v1 .
+docker push <user>/vllm-lfm2-int4:v1
+rm -rf awq_model_int4_lmhead    # nội dung đã nằm trong image
+```
+
+### A6 [PORTAL] Nộp & đọc
+Sửa `image:` trong `docker-compose-M1-int4-cudagraph.yml`.
+
+⚠️ File M1 đang đổi **2 biến** (checkpoint mới + `cudagraph_mode: FULL`). Giữ kỷ luật 1 biến thì **bỏ dòng `cudagraph_mode`** đi, để đo riêng phần nén.
+
+```bash
+python3 tools/infer_tpot.py --score ... --p50 ... --p95 ... --fail ...
+```
+
+**Đối chiếu:** TPOT hiệu dụng phải đi từ **4.125 → ~3.79 ms** (điểm ~61.8).
+- Đúng ⇒ mô hình chuẩn, sang đường B.
+- Không nhúc nhích ⇒ mâu thuẫn ở mục 1 nghiêng về "kernel chậm" hoặc "không bandwidth-bound" ⇒ **dừng, đừng làm B**.
+
+---
+
+## 5. ĐƯỜNG B — vá vLLM rồi nén thêm conv proj
+
+### B1 [DOCKER] Xem trước bản vá đổi gì (không build, không ghi)
+```bash
+docker run --rm -v "$PWD/tools:/t" --entrypoint python3 vllm/vllm-openai:v0.22.1 \
+  /t/patch_shortconv.py --vllm-dir /usr/local/lib/python3.12/dist-packages/vllm --check
+```
+
+Phải thấy đúng 4 chỗ thêm vào, **không có gì khác**:
+1. `ShortConv.__init__` thêm tham số `quant_config=None`
+2. `self.in_proj = ...` thêm `quant_config=quant_config`
+3. `self.out_proj = ...` thêm `quant_config=quant_config`
+4. `lfm2.py`: `ShortConv(...)` thêm `quant_config=quant_config`
+
+Script **assert đúng 1 lần khớp** cho mỗi mỏ neo. Nguồn vLLM khác giả định ⇒ nó **báo lỗi**, không sửa bừa.
+
+### B2 [GPU] Requant đầy đủ
+```bash
+python3 tools/requant_int4_full.py --stage full --calib-samples 256 --seqlen 2048
+du -sh awq_model_int4_full/          # mốc: ~0.88 GB
+```
+
+### B3 [GPU] Build image đã vá
+```bash
+docker build -f Dockerfile.convquant -t <user>/vllm-lfm2-convquant:v1 .
+```
+Dockerfile có sẵn bước `import vllm.model_executor.models.lfm2` ⇒ vá sai cú pháp thì **chết lúc build**, không chết lúc chấm.
+
+### B4 [GPU] Nạp thử — đây là chỗ dễ vỡ nhất
+```bash
+docker run --rm --gpus all <user>/vllm-lfm2-convquant:v1 \
+  --model=/model --max-model-len=2048 --max-num-seqs=4 2>&1 | tee load_b.log
+grep -iE "conv|in_proj|missing|unexpected|KeyError|marlin" load_b.log
+```
+
+**Rủi ro đã biết:** `in_proj` là `MergedColumnParallelLinear` gộp 3 đầu ra (B, C, x của conv). Khi nén, tên tensor đổi `weight` → `weight_packed`/`weight_scale`, mà `load_weights` trong `lfm2.py` có bảng ánh xạ tên riêng (`stacked_params_mapping`). **Script vá KHÔNG xử lý chỗ này.** Thấy `KeyError` hoặc `missing weight` cho `in_proj` thì đó là nguyên nhân — phải sửa thêm bảng ánh xạ đó bằng tay.
+
+### B5 Lặp lại A4 (GPQA) → A5 (build/push) → A6 (nộp + `infer_tpot`)
+**Đối chiếu:** TPOT phải đi từ 4.125 → **~3.38 ms** (điểm ~65.5).
+
+---
+
+## 6. Bảng theo dõi — điền vào sau mỗi lần nộp
+
+| Bản | Điểm | ttft p50/p95 | fail | **TPOT suy ra** | Ghi chú |
+|---|---|---|---|---|---|
+| `59.32-fp8` | 59.32 | 55/79 | 6 | **4.125 ms** | nền, fallback an toàn |
+| `T1-chunk4096` | 58.44 | 58/84 | 6 | **4.152 ms** | thua — nhánh chunk đóng |
+| `P1-bf16-probe` | | | | | ≥5.3 ⇒ bandwidth-bound |
+| `T3-cudagraph-full` | | | | | |
+| Đường A (`lmhead`) | | | | | kỳ vọng ~3.79 ms |
+| Đường B (`full`) | | | | | kỳ vọng ~3.38 ms |
+
+---
+
+## 7. Đừng làm
+
+- **Đừng requant trước khi có kết quả P1.** P1 tốn 1 lượt nộp và 0 GB; requant tốn ~10 GB + 2 tiếng.
+- **Đừng gỡ `lm_head.weight` trùng lặp với `embed_tokens`** (dù `tie_embedding: true`). Chỉ tiết kiệm đĩa/VRAM, **không** giảm byte đọc mỗi step — GEMM tính logits vẫn phải đọc đủ ma trận. VRAM 18 GB vốn đã thừa.
+- **Đừng hạ conv xuống FP8 thay vì INT4 để né bản vá.** Vấn đề là layer không có quant method nào, không phải định dạng — FP8 cũng lỗi nạp y hệt.
+- **Đừng gói nhiều thay đổi vào một lần nộp.** Bản 56.38 đổi 6 thứ, mất 3 điểm, không biết do đâu.
+- **Đừng đụng vào bản 59.32** — đó là fallback an toàn.

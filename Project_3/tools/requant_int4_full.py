@@ -61,36 +61,50 @@ MODEL_SRC = os.environ.get("MODEL_SRC", "LiquidAI/LFM2.5-1.2B-Instruct")
 SCHEME = os.environ.get("SCHEME", "W4A16")
 
 
+CONV_ALL = r"re:^model\.layers\.\d+\.conv\."
+CONV_OUT = r"re:^model\.layers\.\d+\.conv\.out_proj$"
+
+
 def build_recipe(stage: str):
+    """
+    stage="lmhead" : conv VẪN bỏ qua (như checkpoint cũ) + nén lm_head.
+                     -> CHẠY ĐƯỢC VỚI vLLM GỐC, không cần vá. Cắt 198 MB.
+    stage="conv"   : nén conv proj, KHÔNG nén lm_head.
+                     -> BẮT BUỘC có bản vá tools/patch_shortconv.py. Cắt 248 MB.
+    stage="full"   : nén cả hai. -> BẮT BUỘC có bản vá. Cắt 446 MB.
+    """
     from llmcompressor.modifiers.awq import AWQModifier
     from llmcompressor.modifiers.quantization import QuantizationModifier
 
-    # --- Nhóm 1: FFN + attention + conv.in_proj -> AWQ W4A16 (có norm đứng trước) ---
-    awq = AWQModifier(
-        targets=["Linear"],
-        # KHÁC recipe cũ: KHÔNG còn ignore 're:^model\\.layers\\.\\d+\\.conv\\.'
-        ignore=["lm_head", r"re:^model\.layers\.\d+\.conv\.out_proj$"],
-        scheme=SCHEME,
-    )
+    quantize_conv = stage in ("conv", "full")
+    quantize_head = stage in ("lmhead", "full")
 
-    # --- Nhóm 2: conv.out_proj -> RTN W4A16 (không cần smoothing mapping) ---
-    rtn_targets = [r"re:^model\.layers\.\d+\.conv\.out_proj$"]
-    if stage == "full":
-        # lm_head đọc 268 MB MỖI step -> nén được là +~2.5 điểm. Rủi ro logit cao nhất.
+    # --- Nhóm 1: AWQ W4A16 cho các layer có norm đứng trước (FFN, attention,
+    #     và conv.in_proj nếu được bật) ---
+    awq_ignore = ["lm_head"]
+    awq_ignore.append(CONV_OUT if quantize_conv else CONV_ALL)
+    awq = AWQModifier(targets=["Linear"], ignore=awq_ignore, scheme=SCHEME)
+
+    # --- Nhóm 2: RTN W4A16 cho những layer không có norm đứng trước ---
+    rtn_targets = []
+    if quantize_conv:
+        rtn_targets.append(CONV_OUT)
+    if quantize_head:
+        # lm_head bị ĐỌC 268 MB MỖI step -> nén là +~2.4 điểm.
+        # Cũng là chỗ rủi ro logit cao nhất -> luôn đo lại GPQA sau bước này.
         rtn_targets.append("lm_head")
 
-    rtn = QuantizationModifier(
-        targets=rtn_targets,
-        scheme=SCHEME,
-        ignore=[],
-    )
-    return [awq, rtn]
+    recipe = [awq]
+    if rtn_targets:
+        recipe.append(QuantizationModifier(targets=rtn_targets, scheme=SCHEME, ignore=[]))
+    return recipe
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--stage", choices=["conv", "full"], default="conv",
-                    help="conv = nén thêm conv proj | full = nén thêm cả lm_head")
+    ap.add_argument("--stage", choices=["lmhead", "conv", "full"], default="lmhead",
+                    help="lmhead = chỉ nén lm_head (KHÔNG cần vá vLLM) | "
+                         "conv = nén conv proj (CẦN vá) | full = cả hai (CẦN vá)")
     ap.add_argument("--out", default=None)
     ap.add_argument("--verify", action="store_true",
                     help="chỉ nạp lại checkpoint đã có và in kích thước, không quantize")
@@ -98,6 +112,9 @@ def main():
                     help="512 cho GPU >=24GB; dùng 256 trên RTX 3060 12GB")
     ap.add_argument("--seqlen", type=int, default=4096,
                     help="4096 khớp prompt thật trong trace; hạ 2048 nếu thiếu VRAM")
+    ap.add_argument("--no-streaming", action="store_true",
+                    help="tải TRỌN split calibration (~2-3 GB đĩa). Mặc định dùng "
+                         "streaming: chỉ kéo đúng số mẫu cần, tốn ~50 MB")
     args = ap.parse_args()
 
     out_dir = args.out or f"awq_model_int4_{args.stage}"
@@ -119,11 +136,22 @@ def main():
     )
 
     # Calibration: prompt dài ~4K token cho khớp phân phối thật của trace.
-    ds = (
-        load_dataset("HuggingFaceH4/ultrachat_200k", split="train_sft")
-        .shuffle(seed=42)
-        .select(range(args.calib_samples))
-    )
+    # Mặc định STREAMING -> chỉ kéo đúng args.calib_samples mẫu (~50 MB) thay vì
+    # tải trọn split train_sft (~2-3 GB). Quan trọng khi ổ đĩa chật.
+    if args.no_streaming:
+        ds = (
+            load_dataset("HuggingFaceH4/ultrachat_200k", split="train_sft")
+            .shuffle(seed=42)
+            .select(range(args.calib_samples))
+        )
+    else:
+        import itertools
+        from datasets import Dataset
+
+        stream = load_dataset(
+            "HuggingFaceH4/ultrachat_200k", split="train_sft", streaming=True,
+        ).shuffle(seed=42, buffer_size=2000)
+        ds = Dataset.from_list(list(itertools.islice(stream, args.calib_samples)))
 
     def _fmt(ex):
         text = tok.apply_chat_template(ex["messages"], tokenize=False)

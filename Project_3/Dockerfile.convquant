@@ -1,0 +1,38 @@
+# Image vLLM đã VÁ để layer conv của LFM2 nhận được quant_config.
+#
+# BẢN VÁ LÀM GÌ (không đổi một phép tính nào):
+#   1. ShortConv.__init__        thêm tham số  quant_config=None
+#   2. self.in_proj  = ...       thêm  quant_config=quant_config
+#   3. self.out_proj = ...       thêm  quant_config=quant_config
+#   4. lfm2.py: ShortConv(...)   thêm  quant_config=quant_config
+# Chỉ nối lại đường dây lượng tử hoá mà vLLM vốn đã có, nhưng upstream quên cắm
+# vào layer conv. Không đụng weights, tokenizer, thuật toán, không dual-path.
+#
+# ⏸️ Chỉ đáng build NẾU P1 xác nhận decode bị chặn bởi băng thông.
+#    Xem tools/RUNBOOK_requant.md.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# BUILD:
+#   1) requant trước (cần bản vá này mới nén nổi conv):
+#        python3 tools/requant_int4_full.py --stage full --calib-samples 256 --seqlen 2048
+#      -> ra thư mục awq_model_int4_full/, mốc kích thước ~0.88 GB
+#   2) docker build -f Dockerfile.convquant -t <user>/vllm-lfm2-convquant:v1 .
+#
+# XEM TRƯỚC bản vá sẽ đổi gì mà không build (khuyến nghị chạy 1 lần):
+#   docker run --rm -v "$PWD/tools:/t" --entrypoint python3 vllm/vllm-openai:v0.22.1 \
+#     /t/patch_shortconv.py --vllm-dir /usr/local/lib/python3.12/dist-packages/vllm --check
+# ─────────────────────────────────────────────────────────────────────────────
+
+FROM vllm/vllm-openai:v0.22.1
+
+# Vá bằng SCRIPT chứ không COPY đè cả file: script bám vào vài mỏ neo ngắn và
+# assert số lần khớp, nên nếu nguồn vLLM khác giả định thì nó BÁO LỖI ngay lúc
+# build — thay vì âm thầm chạy sai lúc chấm. Và BTC dựng lại được y hệt.
+COPY tools/patch_shortconv.py /tmp/patch_shortconv.py
+RUN python3 /tmp/patch_shortconv.py \
+      --vllm-dir "$(python3 -c 'import vllm,os;print(os.path.dirname(vllm.__file__))')" \
+ && python3 -c "import vllm.model_executor.models.lfm2; print('import OK sau khi vá')" \
+ && rm /tmp/patch_shortconv.py
+
+# Checkpoint đã requant — lúc này conv proj mới thật sự được nén
+COPY awq_model_int4_full/ /model/

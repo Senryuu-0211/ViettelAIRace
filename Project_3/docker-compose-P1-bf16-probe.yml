@@ -1,0 +1,55 @@
+# P1 — PHÉP THỬ CHẨN ĐOÁN, không nhằm ăn điểm. Dự kiến ĐIỂM SẼ TỆ ĐI.
+#
+# BIẾN DUY NHẤT: BỎ `--quantization=fp8`  ->  chạy BF16 thuần.
+#
+# CÂU HỎI CẦN TRẢ LỜI: decode có thật sự bị chặn bởi BĂNG THÔNG WEIGHT không?
+#   Byte đọc mỗi step:  BF16 2340 MB  vs  FP8 1472 MB   (chênh +868 MB)
+#   Nếu bandwidth-bound ở ~600 GB/s -> TPOT +1.45 ms -> 4.13 => ~5.6 ms => điểm ~48
+#   Nếu overhead-bound              -> TPOT gần như đứng yên      => điểm ~57-58
+#
+# VÌ SAO PHẢI HỎI: mô hình băng thông dự đoán AWQ (1055 MB) nhanh hơn FP8 (1472 MB)
+# 0.69 ms tức +5 điểm. Thực tế 59.33 vs 59.32 = chênh 0.01. Mâu thuẫn chưa giải được.
+# Phép thử này phân định dứt khoát, và KHÔNG tốn build, không tốn đĩa.
+#
+# ĐỌC KẾT QUẢ (chạy tools/infer_tpot.py trên số Portal trả về):
+#   TPOT >= 5.3 ms  -> BANDWIDTH-BOUND. Mô hình đúng; bản AWQ cũ chậm là do KERNEL
+#                      (W4A16_ASYM không vào Marlin). => requant W4A16 đối xứng rất
+#                      đáng làm, và bản vá ShortConv cũng đáng.
+#   TPOT <= 4.5 ms  -> KHÔNG bandwidth-bound. Toàn bộ ~4.1 ms là overhead host.
+#                      => BỎ HẲN nhánh requant. Dồn 100% vào cudagraph / version /
+#                         giảm chi phí CPU mỗi step.
+#
+# VRAM: BF16 ~2.34 GB weight, thừa sức trong 18 GB.
+services:
+  model:
+    image: vllm/vllm-openai:v0.22.1
+    entrypoint:
+      - python3 #Don't change this to vllm-server
+      - -m  #Don't change this to vllm-server
+      - vllm.entrypoints.openai.api_server #Don't change this to vllm-server
+    command:
+      - --model=/model #Don't change this to vllm-server
+      - --served-model-name=LFM2.5-1.2B-Instruct #Don't change this to vllm-server
+      - --host=0.0.0.0 #Don't change this to vllm-server
+      - --port=8000 #Don't change this to vllm-server
+      - --max-model-len=5120
+      - --max-num-seqs=16
+      - --max-num-batched-tokens=8192
+      - --enable-prefix-caching
+      # <<< BIẾN DUY NHẤT: đã BỎ dòng --quantization=fp8
+      - --async-scheduling
+      - '--compilation-config={"cudagraph_capture_sizes": [1, 2, 4, 8, 16]}'
+      - --gpu-memory-utilization=0.90
+      - --tensor-parallel-size=1
+      - --disable-log-stats
+      - --uvicorn-log-level=warning
+    ports:
+      - "8000:8000"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

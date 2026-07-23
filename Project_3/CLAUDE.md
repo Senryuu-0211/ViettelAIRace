@@ -101,6 +101,7 @@ Tính trực tiếp từ `trace_grading_public.jsonl`:
 
 | # | File | Đổi ĐÚNG 1 thứ | Vì sao |
 |---|---|---|---|
+| **P1** | `docker-compose-P1-bf16-probe.yml` | **BỎ** `--quantization=fp8` | **CHẨN ĐOÁN, không nhằm ăn điểm** — dự kiến điểm tệ đi. Đọc/step 1472 → 2340 MB. TPOT suy ra **≥5.3 ms ⇒ bandwidth-bound** (requant đáng làm) · **≤4.5 ms ⇒ KHÔNG** (bỏ hẳn requant). Xem §4b |
 | **T3** | `docker-compose-T3-cudagraph-full.yml` | `cudagraph_mode: "FULL"` | Ở batch 1, gộp ~16 layer × nhiều kernel thành **1 lần launch** → đánh thẳng overhead host. Chưa từng test sạch |
 | **T4** | `docker-compose-T4-vllm0251.yml` | image → `v0.25.1` | Bản mới cắt overhead vòng lặp engine CPU. 56.38 đã làm nhiễu biến này |
 | **T5** | `docker-compose-T5-ompthreads.yml` | `OMP_NUM_THREADS=1` | 3 core; OpenMP thread pool **spin-wait** cướp CPU của scheduler + SSE |
@@ -141,6 +142,38 @@ Giá biên: **TPOT 7.41 đ/ms** · TTFT 0.227 đ/ms ⇒ không có đường vò
 `s_tpot` 0.444 → 0.877 ⇒ **≈ 83đ** (giữ TTFT 55ms) + vá fail 0.86.
 Script: `tools/requant_int4_full.py`.
 
+### 4b. 🔴 CHẶN ĐƯỜNG: vLLM KHÔNG quantize được conv proj (đã kiểm chứng 2026-07-23)
+
+`ShortConv.__init__` (`short_conv.py`) **không nhận `quant_config`**; `Lfm2ShortConvDecoderLayer` cũng không truyền vào. Hai Linear đó dùng `UnquantizedLinearMethod`.
+
+| Layer | quant_config? |
+|---|---|
+| `lm_head` (lfm2.py:473) · attention · FFN | ✅ |
+| **`conv.in_proj` / `conv.out_proj`** | ❌ |
+
+- **Hạ conv xuống FP8 cũng KHÔNG cứu được** — vấn đề là layer không có quant method nào, nên nó tìm tensor `weight` còn checkpoint ghi `weight_packed` ⇒ lỗi nạp, bất kể định dạng.
+- **Hệ quả:** `--quantization=fp8` đi qua đúng cơ chế đó ⇒ **bản 59.32 (FP8) cũng để conv proj ở BF16.** Cả AWQ lẫn FP8 đều mang nguyên 335.7 MB.
+
+### 🔴 Dữ liệu đang PHẢN BÁC mô hình băng thông
+
+| Cấu hình | FFN | attn | conv | lm_head | Tổng đọc/step | @600 GB/s |
+|---|---:|---:|---:|---:|---:|---:|
+| BF16 thuần | 1610 | 126 | 336 | 268 | **2340 MB** | 3.90 ms |
+| FP8 (59.32) | 805 | 63 | 336 | 268 | **1472 MB** | 2.45 ms |
+| AWQ (59.33) | 418 | 33 | 336 | 268 | **1055 MB** | 1.76 ms |
+
+Mô hình dự đoán AWQ nhanh hơn FP8 **0.69 ms ⇒ +5đ**. Thực tế chênh **0.01đ**.
+⇒ Hoặc băng thông MiG ≫ 600 GB/s, hoặc kernel `W4A16_ASYM` chậm ăn hết phần lợi. **P1 phân định.**
+⇒ **KHÔNG chạy requant trước khi có kết quả P1** (P1 tốn 1 lượt nộp, 0 GB đĩa; requant tốn ~10 GB + 2 tiếng + có thể cả bản vá vLLM).
+
+### Nếu P1 xác nhận bandwidth-bound thì có 2 đường
+| Đường | Cắt | Điểm | Rủi ro |
+|---|---:|---:|---|
+| Quantize `lm_head` (đã có `quant_config` ✅) | −198 MB | +2.4 | thấp, không đụng vLLM |
+| Vá `ShortConv` nhận `quant_config` rồi requant conv | −248 MB | +3.1 | ✅ Mr. Senryuu đã quyết **làm, khỏi hỏi BTC**. `tools/patch_shortconv.py` + `Dockerfile.convquant` |
+
+Làm cả hai ⇒ đọc/step 1055 → **609 MB**.
+
 ### Ngân sách accuracy đang bỏ phí 100%
 `f(Δ)=1` khi drop ≤ 0.10, mà ta đang đo **drop = 0** ⇒ nén mạnh tay là **miễn phí về điểm** miễn còn dưới ngưỡng. Phải đo lại GPQA sau requant.
 
@@ -168,7 +201,9 @@ Portal chỉ trả `tbt_median_ms` **làm tròn số nguyên** — ta đang tố
 | `docker-compose-T3-cudagraph-full.yml` | Ablation tiếp theo #1 — cudagraph FULL trên nền FP8 |
 | `docker-compose-T4-vllm0251.yml` | Ablation #2 — chỉ nâng version |
 | `docker-compose-T5-ompthreads.yml` | Ablation #3 — `OMP_NUM_THREADS=1` |
-| `docker-compose-M1-int4-cudagraph.yml` | **MŨI CHÍNH nhắm 80+** — INT4 đầy đủ + cudagraph FULL |
+| `docker-compose-P1-bf16-probe.yml` | **CHẨN ĐOÁN** — bỏ fp8, phân định bandwidth-bound hay không |
+| `docker-compose-M1-int4-cudagraph.yml` | ⏸️ **TẠM HOÃN** — chỉ dùng nếu P1 xác nhận bandwidth-bound |
+| `tools/RUNBOOK_requant.md` | Quy trình requant + ngân sách đĩa + vì sao Phương án B hỏng |
 | `Dockerfile.int4` | Build image chứa checkpoint INT4 đã requant |
 | `tools/requant_int4_full.py` | Nén nốt conv proj (+ tuỳ chọn lm_head). Chạy trên H200 |
 | `tools/measure_tpot.py` | Đo TTFT/TPOT tại chỗ tới 0.01ms — sàng lọc không tốn lượt nộp |
