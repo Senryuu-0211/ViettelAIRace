@@ -17,7 +17,49 @@ Ký hiệu: **[DOCKER]** máy nào có Docker cũng được · **[GPU]** cần 
 
 ---
 
-## 1. ⛔ TRƯỚC KHI TỐN CÔNG: chạy P1
+## 1. ✅ P1 ĐÃ CHẠY XONG — kết quả: LÀM ĐI
+
+**P1 → 46.78** (ttft 61/100, fail 8) ⇒ **TPOT 5.894 ms**, so với nền 4.125 ms.
++868 MB byte cho **+1.769 ms** ⇒ **decode ĐÚNG LÀ bandwidth-bound.**
+
+Mô hình đã hiệu chuẩn, khớp cả hai điểm đo với sai số 0.000 ms:
+
+```
+TPOT(ms) = byte_đọc_mỗi_step(MB) / 490.7 GB/s  +  1.125 ms
+```
+
+### 🔑 Và nó phát hiện ra ~6.5 điểm đang bị mất trắng
+
+| Cấu hình | đọc/step | TPOT dự báo | điểm dự báo | điểm THẬT |
+|---|---:|---:|---:|---:|
+| BF16 (P1) | 2340 MB | 5.89 ms | 48.6 | **46.78** ✓ |
+| FP8 (59.32) | 1472 MB | 4.12 ms | 59.3 | **59.32** ✓ |
+| **AWQ hiện tại** | **1055 MB** | **3.27 ms** | **65.8** | **59.33** ❌ |
+
+Bản AWQ lẽ ra phải ~65.8 mà chỉ được 59.33. Chênh **6.5 điểm ≈ 0.85 ms** chính là **chi phí kernel của `W4A16_ASYM`** — checkpoint có `weight_zero_point` nên không vào được đường nhanh Marlin, và phần chậm đó ăn đúng bằng phần lợi băng thông.
+
+**⇒ Việc đáng làm nhất: requant sang `W4A16` ĐỐI XỨNG.** Script đã mặc định `SCHEME=W4A16`.
+
+### Lộ trình có số
+
+| Bước | đọc/step | TPOT | điểm (6 fail / 0 fail) |
+|---|---:|---:|---:|
+| hiện tại (FP8) | 1472 | 4.12 ms | 59.3 / 60.2 |
+| **W4A16 đối xứng** | 1055 | 3.27 ms | **65.8 / 66.8** |
+| **+ lm_head** (Đường A) | 857 | 2.87 ms | **69.2 / 70.2** |
+| **+ conv** (Đường B, cần vá) | 609 | 2.37 ms | **73.8 / 74.8** |
+
+Trần của riêng nhánh nén byte ≈ **75**. Muốn 80+ phải cắt thêm **overhead 1.125 ms** bằng T4/T5.
+
+### Tin phụ: 6 fail sẽ tự giảm
+P1 chậm hơn ⇒ fail **6 → 8**. Fail nhạy với độ trễ (timeout), không phải lỗi tất định. TPOT giảm thì fail tự giảm — không cần vá riêng.
+
+---
+
+<details>
+<summary>Lý do ban đầu phải chạy P1 (giữ lại làm tham chiếu)</summary>
+
+## 1-cũ. ⛔ TRƯỚC KHI TỐN CÔNG: chạy P1
 
 **Có một mâu thuẫn chưa giải.** Byte đọc mỗi step:
 
@@ -46,6 +88,8 @@ python3 tools/infer_tpot.py --score <final_score> --p50 <ttft_p50_ms> --p95 <ttf
 | **≤ 4.5 ms** | KHÔNG bandwidth-bound ❌ | **DỪNG runbook này.** Cả 4.125 ms là overhead host → dồn hết vào T3 / T4 / T5 |
 
 > Song song, nộp luôn `docker-compose-T3-cudagraph-full.yml` (chỉ thêm `cudagraph_mode: "FULL"`). Cũng miễn phí, và tấn công nửa còn lại.
+
+</details>
 
 ---
 

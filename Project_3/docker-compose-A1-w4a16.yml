@@ -1,0 +1,39 @@
+# A1 — checkpoint requant W4A16 ĐỐI XỨNG (+ lm_head). Dự báo 69-70 điểm.
+#
+# Khác bản 59.32 đúng 2 chỗ:
+#   - image: chứa checkpoint đã requant (thay vì model gốc + fp8 online)
+#   - BỎ --quantization=fp8: vLLM tự nhận compressed-tensors từ config.json
+#
+# KHÔNG thêm cudagraph_mode: FULL — đã đo là trung tính/hơi âm, đừng nhét vào.
+services:
+  model:
+    image: <YOUR_DOCKERHUB>/vllm-lfm2-w4a16:v1
+    entrypoint:
+      - python3 #Don't change this to vllm-server
+      - -m  #Don't change this to vllm-server
+      - vllm.entrypoints.openai.api_server #Don't change this to vllm-server
+    command:
+      - --model=/model #Don't change this to vllm-server
+      - --served-model-name=LFM2.5-1.2B-Instruct #Don't change this to vllm-server
+      - --host=0.0.0.0 #Don't change this to vllm-server
+      - --port=8000 #Don't change this to vllm-server
+      - --max-model-len=5120
+      - --max-num-seqs=16
+      - --max-num-batched-tokens=8192
+      - --enable-prefix-caching
+      - --async-scheduling
+      - '--compilation-config={"cudagraph_capture_sizes": [1, 2, 4, 8, 16]}'
+      - --gpu-memory-utilization=0.90
+      - --tensor-parallel-size=1
+      - --disable-log-stats
+      - --uvicorn-log-level=warning
+    ports:
+      - "8000:8000"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
