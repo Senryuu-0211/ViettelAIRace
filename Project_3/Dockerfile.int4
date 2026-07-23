@@ -5,3 +5,4 @@
 # Đường B (nén cả conv proj, cần vá vLLM) dùng Dockerfile.convquant.
 FROM vllm/vllm-openai:v0.22.1
 COPY awq_model_int4_lmhead/ /model/
+RUN python3 -c "import json; c=json.load(open('/model/config.json'))['quantization_config']; g=list(c['config_groups'].values())[0]['weights']; assert g.get('symmetric') == True, 'FAIL: checkpoint is asymmetric — requant with W4A16 symmetric'; assert g['num_bits'] == 4, 'FAIL: not 4-bit'"

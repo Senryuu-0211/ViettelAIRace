@@ -1,0 +1,46 @@
+# A1 — ĐƯỜNG A: W4A16 đối xứng + nén lm_head.
+#
+# Khác bản 59.32 ở ĐÚNG 1 biến:
+#   checkpoint INT4 W4A16 (symmetric, nén lm_head) thay vì FP8 online.
+#   - Cắt 198 MB (lm_head 268→? MB) → đọc/step giảm → TPOT giảm.
+#   - W4A16 đối xứng (không weight_zero_point) để khớp kernel Marlin.
+#   - Bỏ --quantization=fp8: compressed-tensors tự nhận từ config.json.
+#
+# Dự báo: TPOT ~2.87 ms, điểm ~69-70.
+#
+# YÊU CẦU: build image trước:
+#   python3 tools/requant_int4_full.py --stage lmhead --calib-samples 256 --seqlen 2048
+#   docker build -f Dockerfile.int4 -t <user>/vllm-lfm2-w4a16:v1 .
+#   docker push <user>/vllm-lfm2-w4a16:v1
+services:
+  model:
+    image: <YOUR_DOCKERHUB>/vllm-lfm2-w4a16:v1
+    entrypoint:
+      - python3 #Don't change this to vllm-server
+      - -m  #Don't change this to vllm-server
+      - vllm.entrypoints.openai.api_server #Don't change this to vllm-server
+    command:
+      - --model=/model #Don't change this to vllm-server
+      - --served-model-name=LFM2.5-1.2B-Instruct #Don't change this to vllm-server
+      - --host=0.0.0.0 #Don't change this to vllm-server
+      - --port=8000 #Don't change this to vllm-server
+      - --max-model-len=5120
+      - --max-num-seqs=16
+      - --max-num-batched-tokens=8192
+      - --enable-prefix-caching
+      - --async-scheduling
+      - '--compilation-config={"cudagraph_capture_sizes": [1, 2, 4, 8, 16]}'
+      - --gpu-memory-utilization=0.90
+      - --tensor-parallel-size=1
+      - --disable-log-stats
+      - --uvicorn-log-level=warning
+    ports:
+      - "8000:8000"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
