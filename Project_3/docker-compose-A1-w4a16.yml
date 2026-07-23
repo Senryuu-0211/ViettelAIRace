@@ -1,10 +1,16 @@
-# A1 — checkpoint requant W4A16 ĐỐI XỨNG (+ lm_head). Dự báo 69-70 điểm.
+# A1 — ĐƯỜNG A: W4A16 đối xứng + nén lm_head. Dự báo 69-70 điểm.
 #
-# Khác bản 59.32 đúng 2 chỗ:
-#   - image: chứa checkpoint đã requant (thay vì model gốc + fp8 online)
-#   - BỎ --quantization=fp8: vLLM tự nhận compressed-tensors từ config.json
+# Khác bản 59.32 ở ĐÚNG 1 biến:
+#   checkpoint INT4 W4A16 (symmetric, nén lm_head) thay vì FP8 online.
+#   - Cắt 198 MB (lm_head 268→~70 MB) → đọc/step giảm → TPOT giảm.
+#   - W4A16 đối xứng (không weight_zero_point) để khớp kernel Marlin.
+#   - Bỏ --quantization=fp8: compressed-tensors tự nhận từ config.json.
+#   - KHÔNG thêm cudagraph_mode: FULL (đã đo trung tính/hơi âm).
 #
-# KHÔNG thêm cudagraph_mode: FULL — đã đo là trung tính/hơi âm, đừng nhét vào.
+# YÊU CẦU: build image trước:
+#   python3 tools/requant_int4_full.py --stage lmhead --calib-samples 256 --seqlen 2048
+#   docker build -f Dockerfile.int4 -t <user>/vllm-lfm2-w4a16:v1 .
+#   docker push <user>/vllm-lfm2-w4a16:v1
 services:
   model:
     image: <YOUR_DOCKERHUB>/vllm-lfm2-w4a16:v1
