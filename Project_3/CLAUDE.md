@@ -164,7 +164,23 @@ Khớp cả hai điểm đo với sai số 0.000 ms. Dự đoán tiên nghiệm 
 AWQ lẽ ra phải ~65.8. Chênh **6.5 điểm ≈ 0.85 ms** = **chi phí kernel của `W4A16_ASYM`** (có `weight_zero_point` ⇒ không vào được Marlin), ăn đúng bằng phần lợi băng thông.
 ⇒ **Ưu tiên số 1: requant sang `W4A16` ĐỐI XỨNG.** Không cần vá vLLM, không cần đổi gì khác.
 
-### Lộ trình có số
+### ⚠️ A1 (2026-07-24) = 48.90 — NHƯNG PHÉP THỬ HỎNG (2 biến)
+
+Agent bên bạn đã đổi base image `v0.22.1 → v0.25.1-cu129` để tiết kiệm 15 GB đĩa ⇒ **A1 = đổi quant (FP8→W4A16) + đổi version cùng lúc.** Không diễn giải được, đúng lỗi của bản 56.38.
+
+- So thẳng: FP8 1472 MB → 4.125 ms (v0.22.1) · A1 857 MB → 5.85 ms (v0.25.1). **Nhẹ hơn 615 MB mà CHẬM hơn 1.73 ms** ⇒ chênh này **không thể do byte** ⇒ do (kernel Marlin dequant) và/hoặc (v0.25.1 overhead).
+- **Nghi can version:** cả 2 lần nộp v0.25.1 trước (56.38, 34.37) đều tệ. Chưa từng có bản v0.25.1 nào ≥ 59.
+- ttft giữ 55/78 = y hệt baseline ⇒ regression **toàn bộ ở decode**, không phải prefill.
+
+**⇒ Tách bằng T4** (`docker-compose-T4-vllm0251.yml`): FP8 + v0.25.1, KHÔNG build, KHÔNG requant, 1 lượt nộp.
+| T4 ra | Kết luận |
+|---|---|
+| **≈ 59** | version ổn ⇒ regression của A1 là **Marlin/W4A16** ⇒ INT4 vô dụng trên MiG này, bỏ nhánh byte |
+| **≈ 49** | **version là thủ phạm** ⇒ build lại A1 checkpoint **trên v0.22.1** (checkpoint đã có sẵn, chỉ đổi FROM + push + nộp) để lấy số W4A16 thật |
+
+> Sai của tôi: mô hình băng thông fit trên 2 điểm **kernel native** (BF16, FP8). Nó **không chứa số hạng dequant compute** của Marlin. Dự báo "69đ" cho A1 giả định kernel W4A16 hiệu quả ngang native — giả định chưa được kiểm. Lẽ ra phải nói đó là *sàn nếu kernel lý tưởng*, không phải kỳ vọng.
+
+### Lộ trình có số (chỉ đúng NẾU kernel INT4 đạt hiệu suất native — CHƯA xác nhận)
 
 | Bước | đọc/step | TPOT | điểm (6 fail / 0 fail) |
 |---|---:|---:|---:|
