@@ -1,0 +1,58 @@
+# M-machete-force — ÉP vLLM dùng kernel Machete, CẤM fallback về Marlin.
+#
+# MỤC ĐÍCH: A1 (W4A16) ra 48.90 vì nghi Marlin chạy thay Machete. Phép thử này
+# tắt mọi kernel TRỪ Machete. Kết quả đọc thẳng từ điểm, KHÔNG cần log Portal:
+#   ~0 / all-fail  -> Machete.can_implement FAIL trên Portal (server chết vì hết kernel)
+#                     => biết chắc A1 chạy Marlin; cần xem vì sao Machete từ chối.
+#   ~66-70         -> Machete chạy & NHANH  => đường tới 80 mở, đẩy tiếp Đường B.
+#   ~49            -> Machete chạy & CHẬM   => INT4 chết trên HW này, chốt ~64-66.
+#
+# ⭐ KHÔNG CẦN BUILD LẠI: tái dùng ĐÚNG image A1 đã có sẵn trên Docker Hub
+#    (checkpoint W4A16 đã bake trong đó). Chỉ thêm 1 biến môi trường -> nộp. Như T5.
+#
+# ⚠️ PHỤ THUỘC 2 ĐIỀU cần agent xác nhận từ kernels/mixed_precision/__init__.py:
+#    (1) choose_mp_linear_kernel CÓ kiểm `if kernel.__name__ in envs.VLLM_DISABLED_KERNELS`
+#        -> grep VLLM_DISABLED_KERNELS trong file. Nếu KHÔNG có -> cơ chế này vô hiệu,
+#           phải quay lại patch nguồn (tools/patch_force_machete.py).
+#    (2) TÊN CHÍNH XÁC các class trong _POSSIBLE_KERNELS[CUDA] (dòng 394-404), TRỪ Machete.
+#        Điền hết vào VLLM_DISABLED_KERNELS bên dưới, phân tách bằng dấu phẩy.
+#        Tên điển hình vLLM: MarlinLinearKernel, MacheteLinearKernel, AllSparkLinearKernel,
+#        ExllamaLinearKernel, BitBLASLinearKernel, CutlassLinearKernel...
+#        -> ĐỪNG để MacheteLinearKernel trong danh sách disable.
+#
+services:
+  model:
+    image: trisstarn/vllm-lfm2-w4a16:v1      # <<< image A1 đã có checkpoint W4A16
+    environment:
+      # <<< ĐIỀN tên mọi kernel CUDA TRỪ Machete (xem chú thích (2) ở trên):
+      - VLLM_DISABLED_KERNELS=MarlinLinearKernel
+      # KHÔNG thêm OMP ở đây — giữ đúng 1 biến để đọc được kết quả Machete sạch.
+    entrypoint:
+      - python3 #Don't change this to vllm-server
+      - -m  #Don't change this to vllm-server
+      - vllm.entrypoints.openai.api_server #Don't change this to vllm-server
+    command:
+      - --model=/model #Don't change this to vllm-server
+      - --served-model-name=LFM2.5-1.2B-Instruct #Don't change this to vllm-server
+      - --host=0.0.0.0 #Don't change this to vllm-server
+      - --port=8000 #Don't change this to vllm-server
+      - --max-model-len=5120
+      - --max-num-seqs=16
+      - --max-num-batched-tokens=8192
+      - --enable-prefix-caching
+      - --async-scheduling
+      - '--compilation-config={"cudagraph_capture_sizes": [1, 2, 4, 8, 16]}'
+      - --gpu-memory-utilization=0.90
+      - --tensor-parallel-size=1
+      - --disable-log-stats
+      - --uvicorn-log-level=warning
+    ports:
+      - "8000:8000"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
