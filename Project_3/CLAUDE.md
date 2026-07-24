@@ -62,6 +62,15 @@ s_x   = [clamp((C_x − x)/(C_x − F_x), 0, 1)] ^ γ
 - 🔴 **Marlin INT4 = ĐÓNG.** Nhưng **INT4 ≠ đóng**: có đội đạt **84**, mà 84 đòi TPOT ~1.54ms ⇒ đọc/step ~510MB ⇒ **bắt buộc INT4 sâu**. FP8 (1472MB) vật lý không chạm nổi 84 ⇒ **INT4 nhanh CHẮC CHẮN khả thi trên MiG này** ⇒ vấn đề là **CHỌN SAI KERNEL** (Marlin thay vì **Machete**), không phải INT4 sai.
 - ⇒ Nhánh sống tiếp: **ép vLLM dùng Machete** (INT4 native Hopper SM90) cho checkpoint W4A16 đã có. Checkpoint tái dùng nguyên, gần như 0 công thêm.
 
+### Chẩn đoán Machete (2026-07-24) — thu hẹp còn 1 câu hỏi
+Checkpoint W4A16 **hợp lệ mọi mặt** với Machete (uint4b8, group 128, symmetric, no g_idx, shape chia hết block). Machete có trong v0.25.1, ưu tiên **trên** Marlin.
+- **Trên 3060 (SM86):** Machete fail `get_min_capability()` (cần SM90) ⇒ chỉ Marlin chạy ⇒ **không debug được tốc độ Machete tại local.**
+- **Trên Portal (H200 = SM90):** Machete *đáng lẽ* được chọn. Nhưng A1 ra tbt=6 (chậm). ⇒ chỉ còn 2 khả năng, **không phân biệt được từ điểm số hay từ máy local:**
+  - (a) Machete engage nhưng vẫn chậm ở GEMV batch-1 model 1.2B ⇒ INT4 chết trên HW này.
+  - (b) Machete KHÔNG engage (Marlin chạy) vì lý do chỉ hiện trên Portal.
+- 🔑 **84 điểm đòi TPOT ≤ 2.58ms kể cả TTFT hoàn hảo ⇒ bắt buộc INT4 nhanh ⇒ đội 84 CHẮC CHẮN có INT4 chạy nhanh trên HW này ⇒ (b) nhiều khả năng hơn, và fix được.**
+- **Phép thử dứt điểm (không cần log Portal):** patch vLLM **ép Machete, RAISE nếu fallback**. Nộp 1 lần, đọc điểm: ~0/all-fail → Machete `can_implement` fail trên Portal (khả năng b) · ~66-70 → Machete chạy & nhanh (đường tới 80 mở) · ~49 → Machete chạy & chậm (khả năng a, INT4 chết).
+
 ### Trần thực tế (thành thật, từ nền T4)
 | Kịch bản | TPOT | Điểm |
 |---|---|---|
