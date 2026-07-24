@@ -1,8 +1,54 @@
 # RUNBOOK — nén model để hạ TPOT
 
-Cập nhật 2026-07-23. Đọc từ trên xuống, làm theo thứ tự.
-
 Ký hiệu: **[DOCKER]** máy nào có Docker cũng được · **[GPU]** cần RTX 3060 · **[PORTAL]** nộp lên BTC.
+
+---
+
+## ⭐ TRẠNG THÁI HIỆN TẠI (2026-07-24) — ĐỌC TRƯỚC
+
+**Nền tốt nhất giờ là `T4` = 60.17** (FP8 + vLLM **v0.25.1**, TTFT 52/71, fail 5). Mọi thứ so từ đây, **không phải 59.32**.
+
+### Những gì đã chốt bằng số thật
+| Việc | Kết quả | Nghĩa |
+|---|---|---|
+| P1 (bỏ fp8 → BF16) | 46.78, TPOT 5.89ms | decode **bandwidth-bound** (byte có ảnh hưởng) |
+| T4 (fp8, v0.25.1) | **60.17** ⬆️ | **v0.25.1 tốt hơn v0.22.1** — dùng nó làm nền |
+| A1 (W4A16, lỡ chạy v0.25.1) | 48.90 ⬇️ | **Marlin INT4 chậm hơn FP8 trên Hopper** — phí dequant ăn hết lợi băng thông |
+
+### 🔴 Marlin W4A16 = ĐÓNG. Nhưng INT4 CHƯA đóng.
+Có đội đạt **84** ⇒ cần TPOT ~1.54ms ⇒ đọc/step ~510MB ⇒ **bắt buộc INT4 sâu**. FP8 vật lý không xuống nổi 510MB. ⇒ **INT4 nhanh chắc chắn chạy được trên MiG này**, chỉ là vLLM **chọn nhầm kernel** (Marlin thay vì **Machete**, kernel INT4 native cho Hopper SM90).
+
+### 👉 VIỆC CẦN LÀM, THEO THỨ TỰ
+
+**① [GPU] Chẩn đoán vì sao vLLM không chọn Machete — KHÔNG tốn lượt nộp.** Việc quan trọng nhất; nó quyết định 80+ còn khả thi hay ta chốt ~66.
+```bash
+docker run --rm --gpus all -v "$PWD/awq_model_int4_lmhead:/model:ro" \
+  vllm/vllm-openai:v0.25.1-cu129-ubuntu2404 \
+  --model=/model --max-model-len=2048 --max-num-seqs=4 --gpu-memory-utilization=0.75 \
+  2>&1 | grep -iE "machete|marlin|can_implement|not supported|falling back|scalar_type|act_order|capability|sm_|group"
+```
+Gửi lại toàn bộ dòng khớp. Nghi ngờ (theo khả năng): (a) MiG báo compute capability lạ nên Machete từ chối; (b) layout checkpoint của `llmcompressor` không hợp Machete → phải requant với target khác; (c) group_size/act_order kén.
+
+**② [PORTAL] Nộp T5 để cắt overhead host — song song, độc lập với Machete.**
+Trước khi nộp, **đổi base image T5 sang v0.25.1** để nó chỉ khác T4 đúng 1 biến (`OMP_NUM_THREADS=1`). Nhắm vào phần overhead 1.125ms (nửa TPOT mà nén byte không đụng tới). Kỳ vọng khiêm tốn +1~2đ.
+
+**③ Giữ T4 làm fallback nộp cuối** — đã hơn 59.32 mọi mặt, `f_delta=1`.
+
+### Trần thật (nền T4)
+- Machete hỏng, chỉ cắt được overhead → **~63–66**.
+- Machete chạy + nén conv (Đường B) → ~75.
+- Machete + conv + overhead xuống ~0.6ms → **~80**.
+- **Machete là con đường DUY NHẤT tới 80+.**
+
+### ⛔ Đừng lặp lại
+- Đừng nộp checkpoint Marlin W4A16 nữa (A1 đã đo −11đ).
+- Đừng đổi 2 biến/lần: build image phải **`FROM v0.25.1`** để khớp nền T4 (A1 hỏng vì lỡ đổi cả version).
+- Phần "Đường A/B" bên dưới chỉ có giá trị **SAU KHI** bước ① xác nhận Machete chạy được. Nếu Machete hỏng, toàn bộ nhánh nén byte đóng.
+
+---
+
+<details>
+<summary>📦 Chi tiết requant (Đường A / B) — chỉ dùng khi Machete đã chạy</summary>
 
 ---
 
@@ -265,3 +311,5 @@ grep -iE "conv|in_proj|missing|unexpected|KeyError|marlin" load_b.log
 - **Đừng hạ conv xuống FP8 thay vì INT4 để né bản vá.** Vấn đề là layer không có quant method nào, không phải định dạng — FP8 cũng lỗi nạp y hệt.
 - **Đừng gói nhiều thay đổi vào một lần nộp.** Bản 56.38 đổi 6 thứ, mất 3 điểm, không biết do đâu.
 - **Đừng đụng vào bản 59.32** — đó là fallback an toàn.
+
+</details>

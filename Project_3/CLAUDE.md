@@ -53,7 +53,27 @@ s_x   = [clamp((C_x − x)/(C_x − F_x), 0, 1)] ^ γ
 
 ## 3. Trạng thái hiện tại
 
-**Điểm tốt nhất: `59.32` (fp8) ≈ `59.33` (AWQ)** — fallback an toàn, đừng đụng.
+### 🏆 NỀN MỚI: `T4` = **60.17** (FP8 + vLLM **v0.25.1**) — 2026-07-24
+Đổi đúng 1 biến so với 59.32 (chỉ nâng version). TTFT **52/71** (giảm 3/8ms), fail **5** (−1), tbt 4. TPOT hiệu dụng **4.131 ms**. **Đây là baseline mới — mọi ablation từ giờ xuất phát từ đây, KHÔNG phải 59.32.**
+⇒ **v0.25.1 tốt hơn v0.22.1**, không phải xấu. Kết luận cũ "v0.25.1 làm tệ" bị bác (bản 56.38/34.37 tệ vì các biến khác, không phải version).
+
+### Phán quyết nhánh nén byte (sau A1 + T4)
+- **A1 (W4A16, nhầm chạy v0.25.1) = 48.90.** T4 chứng minh version vô can ⇒ regression −11đ là **do kernel Marlin W4A16 trên Hopper** (dequant compute > byte tiết kiệm).
+- 🔴 **Marlin INT4 = ĐÓNG.** Nhưng **INT4 ≠ đóng**: có đội đạt **84**, mà 84 đòi TPOT ~1.54ms ⇒ đọc/step ~510MB ⇒ **bắt buộc INT4 sâu**. FP8 (1472MB) vật lý không chạm nổi 84 ⇒ **INT4 nhanh CHẮC CHẮN khả thi trên MiG này** ⇒ vấn đề là **CHỌN SAI KERNEL** (Marlin thay vì **Machete**), không phải INT4 sai.
+- ⇒ Nhánh sống tiếp: **ép vLLM dùng Machete** (INT4 native Hopper SM90) cho checkpoint W4A16 đã có. Checkpoint tái dùng nguyên, gần như 0 công thêm.
+
+### Trần thực tế (thành thật, từ nền T4)
+| Kịch bản | TPOT | Điểm |
+|---|---|---|
+| Chỉ cắt overhead host (Machete hỏng) | ~3.5 | ~63–66 |
+| Machete + nén conv (Đường B) | 2.37 | ~75 |
+| Machete + conv + overhead→0.6ms | 1.84 | **~80** |
+
+**Machete là con đường DUY NHẤT tới 80+.** Không có nó, trần ~66.
+
+---
+
+## 3-cũ. (tham chiếu) 59.32 / 59.33 — fallback an toàn, đừng đụng.
 - ERS 59.32 · **f_delta = 1** (accuracy_drop = 0) · TTFT **p50 55ms / p95 79ms** · **TPOT median 4ms** ⟵ bottleneck · **6/420 fail**.
 - Phân rã: s_ttft ≈ **0.78** (tốt) · s_tpot ≈ **0.44** (yếu).
 
