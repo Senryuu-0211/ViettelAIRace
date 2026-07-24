@@ -24,8 +24,9 @@ services:
   model:
     image: trisstarn/vllm-lfm2-w4a16:v1      # <<< image A1 đã có checkpoint W4A16
     environment:
-      # <<< ĐIỀN tên mọi kernel CUDA TRỪ Machete (xem chú thích (2) ở trên):
-      - VLLM_DISABLED_KERNELS=MarlinLinearKernel
+      # Tắt MỌI kernel trừ Machete (đã xác nhận danh sách từ _POSSIBLE_KERNELS[CUDA]).
+      # CutlassW4A8 xếp TRÊN Machete nên bắt buộc có trong danh sách này.
+      - VLLM_DISABLED_KERNELS=CutlassW4A8LinearKernel,AllSparkLinearKernel,MarlinLinearKernel,ConchLinearKernel,ExllamaLinearKernel,TritonW4A16LinearKernel,HummingLinearKernel
       # KHÔNG thêm OMP ở đây — giữ đúng 1 biến để đọc được kết quả Machete sạch.
     entrypoint:
       - python3 #Don't change this to vllm-server

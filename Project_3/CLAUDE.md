@@ -53,9 +53,15 @@ s_x   = [clamp((C_x − x)/(C_x − F_x), 0, 1)] ^ γ
 
 ## 3. Trạng thái hiện tại
 
-### 🏆 NỀN MỚI: `T4` = **60.17** (FP8 + vLLM **v0.25.1**) — 2026-07-24
-Đổi đúng 1 biến so với 59.32 (chỉ nâng version). TTFT **52/71** (giảm 3/8ms), fail **5** (−1), tbt 4. TPOT hiệu dụng **4.131 ms**. **Đây là baseline mới — mọi ablation từ giờ xuất phát từ đây, KHÔNG phải 59.32.**
-⇒ **v0.25.1 tốt hơn v0.22.1**, không phải xấu. Kết luận cũ "v0.25.1 làm tệ" bị bác (bản 56.38/34.37 tệ vì các biến khác, không phải version).
+### 🏆 NỀN MỚI: `T5` = **60.62** (v0.25.1 + FP8 + `OMP_NUM_THREADS=1`) — 2026-07-24
+Chuỗi cải thiện, mỗi bước 1 biến:
+| Bản | Điểm | 1 biến so với bản trước |
+|---|---|---|
+| 59.32-fp8 | 59.32 | (v0.22.1) |
+| **T4** | 60.17 | chỉ nâng **v0.25.1** ⇒ +0.85, TTFT 52/71 |
+| **T5** 🏆 | **60.62** | chỉ thêm **`OMP_NUM_THREADS=1`** ⇒ +0.45, TTFT 49/75 |
+
+⇒ **v0.25.1 tốt hơn v0.22.1** (bác kết luận cũ; 56.38/34.37 tệ vì các biến khác). OMP=1 xác nhận overhead host **có** thật nhưng nhỏ (~0.45đ). **Mọi ablation từ giờ xuất phát từ T5.** Fail nhích 5→6 (nhiễu, theo dõi).
 
 ### Phán quyết nhánh nén byte (sau A1 + T4)
 - **A1 (W4A16, nhầm chạy v0.25.1) = 48.90.** T4 chứng minh version vô can ⇒ regression −11đ là **do kernel Marlin W4A16 trên Hopper** (dequant compute > byte tiết kiệm).
