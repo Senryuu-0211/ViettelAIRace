@@ -13,7 +13,7 @@
 #   docker push <user>/vllm-lfm2-w4a16:v1
 services:
   model:
-    image: <YOUR_DOCKERHUB>/vllm-lfm2-w4a16:v1
+    image: trisstarn/vllm-lfm2-w4a16:v1
     entrypoint:
       - python3 #Don't change this to vllm-server
       - -m  #Don't change this to vllm-server

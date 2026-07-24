@@ -83,10 +83,25 @@ def build_recipe(stage: str):
     #     và conv.in_proj nếu được bật) ---
     awq_ignore = ["lm_head"]
     awq_ignore.append(CONV_OUT if quantize_conv else CONV_ALL)
-    awq = AWQModifier(targets=["Linear"], ignore=awq_ignore, scheme=SCHEME)
+    # Attention projections: q_layernorm 64-dim không khớp q_proj 2048-dim,
+    # operator_norm lại match cả conv layer → dùng RTN cho toàn bộ attention.
+    awq_ignore.append(r"re:^model\.layers\.\d+\.self_attn\.")
+    # Chỉ giữ AWQ cho FFN (ffn_norm + w3 smoothing)
+    lfm2_mappings = [
+        {"smooth_layer": r"re:.*ffn_norm$",
+         "balance_layers": [r"re:.*w1$", r"re:.*w3$"]},
+        {"smooth_layer": r"re:.*w3$",
+         "balance_layers": [r"re:.*w2$"]},
+    ]
+    awq = AWQModifier(targets=["Linear"], ignore=awq_ignore, scheme=SCHEME,
+                      mappings=lfm2_mappings)
 
     # --- Nhóm 2: RTN W4A16 cho những layer không có norm đứng trước ---
     rtn_targets = []
+    # Attention projections: q/k/v/out_proj trong self_attn.
+    # Dùng tên cụ thể để không match nhầm RMSNorm, Attention, RotaryEmbedding.
+    for proj in ("q_proj", "k_proj", "v_proj", "out_proj"):
+        rtn_targets.append(rf"re:^model\.layers\.\d+\.self_attn\.{proj}$")
     if quantize_conv:
         rtn_targets.append(CONV_OUT)
     if quantize_head:
