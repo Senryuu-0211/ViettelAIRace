@@ -23,7 +23,8 @@
 #     /t/patch_shortconv.py --vllm-dir /usr/local/lib/python3.12/dist-packages/vllm --check
 # ─────────────────────────────────────────────────────────────────────────────
 
-FROM vllm/vllm-openai:v0.22.1
+# v0.25.1 để khớp nền T4 (60.17). Xem RUNBOOK — chỉ dùng đường B khi Machete đã chạy.
+FROM vllm/vllm-openai:v0.25.1
 
 # Vá bằng SCRIPT chứ không COPY đè cả file: script bám vào vài mỏ neo ngắn và
 # assert số lần khớp, nên nếu nguồn vLLM khác giả định thì nó BÁO LỖI ngay lúc

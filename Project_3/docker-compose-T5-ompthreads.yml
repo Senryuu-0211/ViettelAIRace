@@ -1,14 +1,18 @@
-# T5 — BIẾN DUY NHẤT: OMP_NUM_THREADS=1 (chống tranh chấp CPU)
+# T5 — BIẾN DUY NHẤT so với nền T4: OMP_NUM_THREADS=1 (chống tranh chấp CPU)
+#
+# NỀN = T4 (fp8 + v0.25.1, 60.17). File này giống HỆT T4, chỉ thêm 1 biến môi trường.
+# ⚠️ Image PHẢI là v0.25.1 (khớp T4). Nếu để v0.22.1 thì lại thành 2 biến -> hỏng như A1.
 #
 # LÝ DO: máy chấm chỉ có 3 CPU core. Mặc định torch/OpenMP mở thread pool = số core và
 # các thread này BUSY-WAIT (spin) khi chờ việc -> cướp CPU của vòng lặp scheduler và của
 # API server (SSE streaming). Ở batch 1-2 (concurrency thực tế ~2), phần torch CPU song
 # song gần như vô dụng, nên ép 1 thread là thuần lợi.
+# Nhắm vào phần OVERHEAD HOST (~1.125ms) của TPOT — nửa mà nén byte không đụng tới.
 #
 # Đây là phép thử RẺ và đúng vào chẩn đoán "host-bound", không đổi bất kỳ cờ vLLM nào.
 services:
   model:
-    image: vllm/vllm-openai:v0.22.1
+    image: vllm/vllm-openai:v0.25.1
     environment:                 # <<< BIẾN DUY NHẤT ĐỔI: thêm khối environment
       - OMP_NUM_THREADS=1
     entrypoint:

@@ -2,8 +2,14 @@
 #   sinh checkpoint: python3 tools/requant_int4_full.py --stage lmhead
 #   mốc kích thước:  ~1.13 GB (từ 1.32 GB). Ra khác nhiều nghĩa là recipe không ăn.
 #
+# ⚠️ FROM = v0.25.1 để khớp NỀN T4 (60.17). A1 hỏng một phần vì lỡ build trên
+#    v0.25.1-cu129-ubuntu2404 trong khi baseline là v0.22.1 -> 2 biến. Giờ nền đã
+#    là v0.25.1 nên build FROM v0.25.1 mới giữ được kỷ luật 1 biến.
+# ⚠️ CHỈ nộp image này SAU KHI xác nhận vLLM chọn kernel Machete (không phải Marlin).
+#    Marlin W4A16 đã đo -11đ (A1). Xem "① Chẩn đoán Machete" trong tools/RUNBOOK_requant.md.
+#
 # Đường B (nén cả conv proj, cần vá vLLM) dùng Dockerfile.convquant.
-FROM vllm/vllm-openai:v0.22.1
+FROM vllm/vllm-openai:v0.25.1
 COPY awq_model_int4_lmhead/ /model/
 
 # Chặn sớm: checkpoint phải là W4A16 ĐỐI XỨNG (không có weight_zero_point).
